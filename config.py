@@ -5,6 +5,14 @@ from pathlib import Path
 # --- Model ---
 # The API key is NOT here: it is read from the OPENAI_API_KEY environment variable.
 MODEL = "gpt-4o-mini"
+# Model that reads the receipt images (read_document). Chosen by a test on real phone photos:
+# gpt-4o-mini misread 4 of 5 totals and invented an amount from a blurry image;
+# gpt-5.4-mini read all totals correctly and refused to guess from a blurry image.
+READ_MODEL = "gpt-5.4-mini"
+# How long the reading model "thinks" before answering: none / low / medium / high.
+# medium: in tests it stopped inventing store names and misreading dates; high was
+# a little more accurate but took up to ~30 seconds per image.
+READ_REASONING_EFFORT = "medium"
 
 # --- Agent limits ---
 # Stop condition: the agent never runs more than this many steps.
@@ -18,6 +26,14 @@ TRANSACTIONS_FILE = DATA_DIR / "transactions.json"
 MEMORY_FILE = DATA_DIR / "memory.json"
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+# --- Reading images (read_document) ---
+# Larger files are refused before sending (OpenAI's own limit is 20 MB).
+MAX_IMAGE_MB = 10
+# Seconds to wait for the model to read one image.
+READ_TIMEOUT_SECONDS = 90
+# Cross-checks (items vs total, payments vs total) allow this much difference (₪) for rounding.
+AMOUNT_TOLERANCE = 0.5
 
 CURRENCY = "₪"
 
@@ -61,6 +77,12 @@ def check_config() -> None:
         problems.append("MAX_STEPS חייב להיות מספר שלם חיובי")
     if not isinstance(BUDGET_WARNING_RATIO, (int, float)) or not 0 < BUDGET_WARNING_RATIO < 1:
         problems.append("BUDGET_WARNING_RATIO חייב להיות בין 0 ל-1")
+    if READ_REASONING_EFFORT not in ("none", "low", "medium", "high"):
+        problems.append("READ_REASONING_EFFORT חייב להיות none / low / medium / high")
+    for name, value in (("MAX_IMAGE_MB", MAX_IMAGE_MB), ("READ_TIMEOUT_SECONDS", READ_TIMEOUT_SECONDS),
+                        ("AMOUNT_TOLERANCE", AMOUNT_TOLERANCE)):
+        if not isinstance(value, (int, float)) or value <= 0:
+            problems.append(f"{name} חייב להיות מספר חיובי")
     for name, categories in (("EXPENSE_CATEGORIES", EXPENSE_CATEGORIES), ("INCOME_CATEGORIES", INCOME_CATEGORIES)):
         if len(set(categories)) != len(categories):
             problems.append(f"יש קטגוריה כפולה ב-{name}")
