@@ -50,12 +50,17 @@ BUDGETS = {
     "פנאי ובילויים": 400,
 }
 
+# Warn "close to budget" from this share of the budget; above 100% it is an overrun.
+BUDGET_WARNING_RATIO = 0.8
+
 
 def check_config() -> None:
     """Catch typos in the settings above before the agent starts. Raises ValueError."""
     problems = []
     if not isinstance(MAX_STEPS, int) or MAX_STEPS < 1:
         problems.append("MAX_STEPS חייב להיות מספר שלם חיובי")
+    if not isinstance(BUDGET_WARNING_RATIO, (int, float)) or not 0 < BUDGET_WARNING_RATIO < 1:
+        problems.append("BUDGET_WARNING_RATIO חייב להיות בין 0 ל-1")
     for name, categories in (("EXPENSE_CATEGORIES", EXPENSE_CATEGORIES), ("INCOME_CATEGORIES", INCOME_CATEGORIES)):
         if len(set(categories)) != len(categories):
             problems.append(f"יש קטגוריה כפולה ב-{name}")
