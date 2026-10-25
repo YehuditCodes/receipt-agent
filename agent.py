@@ -9,6 +9,7 @@ without calling a tool (goal reached) or after config.MAX_STEPS model calls.
 """
 
 import json
+from dataclasses import dataclass, field
 from datetime import date as calendar_date
 
 import openai
@@ -22,32 +23,40 @@ SYSTEM_PROMPT = """You are an expense-tracking agent for one person in Israel. T
 
 GOAL: process every new document (receipt, bill, payslip, refund) in her inbox, record each one
 correctly exactly once, then show her the monthly summary and report what happened.
-You decide the order of the steps yourself, using the tools.
+
+WORK ONE DOCUMENT AT A TIME: finish a document - read it, check for a duplicate, ask her if
+needed, then record it or decide to skip it - before you read the next one. Within a document
+you decide which steps are needed. (Reading everything first made you forget documents she had
+approved, and she could not tell which document a late question was about.)
 
 RULES
 - Documents marked already_recorded are done - do not read them again.
 - Before recording a document, check that it is not already recorded (find_duplicate). The
   candidates may be the same document with a slightly different business name ("שופרסל" /
-  "שופרסל דיל") - compare and decide. If you are not sure, ask her.
+  "שופרסל דיל", "מיכל עטר" / "מיכל עזר") - compare and decide. If you are not sure, ask her.
 - read_document "warnings" mean the reading may be wrong: do not record blindly. Ask her, say
   what looks wrong, and record only what she confirms (or skip if she says so). add_transaction
   refuses a file with warnings until she has answered a question about that file.
   "info" is for your knowledge only and does not block recording.
-- Questions: ask about ONE document per ask_user call and pass its file name in "file". Give
-  options that fit that document (e.g. "לרשום" / "לדלג" / likely categories). When you need a
-  value only she can type (e.g. a business name), ask without options. If she gives no answer,
-  do not record that document and mention it in the final report.
+- Questions: ask about ONE document per ask_user call and pass its file name in "file" (her screen
+  then shows the document's business, date and amount above your question). Never mention the file
+  name in the question itself - she does not know file names. Options must be complete actions she
+  can choose without thinking, e.g. "לרשום כהוצאה" / "לא לרשום", or likely categories - never a yes/no
+  question such as "לדלג?". When you need a value only she can type (e.g. a business name, a date),
+  ask without options. Act on her answer right away. If she gives no answer, do not record that
+  document and mention it in the final report.
 - If read_document returns an error (e.g. a blurry image), do not record anything for that file;
   tell her in the final report which files to upload again.
 - If the business name is missing, ask her for it. Never record a placeholder such as "לא ידוע"
   and never guess the name from a slogan or logo.
 - Type: receipt and bill -> expense. payslip -> income, category "משכורת". refund -> expense with a
-  NEGATIVE amount, in the category of what was returned. "other" (not a financial document) ->
-  ask her whether to skip it.
+  NEGATIVE amount, in the category of what was returned. "other" (not a proof of payment) ->
+  ask her whether to record it.
 - Category: a known business (list below) gets its category without asking. Otherwise choose
-  from the business name and the items only if it is obvious. If not obvious, ask her with
-  ask_user and offer 2-4 likely categories as options; after she answers, call remember_business
-  so you will not ask again. "אחר" is not a way to avoid asking - use it only if she chose it.
+  from the business name and the items only if it is obvious (a donation receipt -> "תרומות").
+  If not obvious, ask her with ask_user and offer 2-4 likely categories as options. "אחר" is not a
+  way to avoid asking - add_transaction refuses "אחר" unless she chose it for that file.
+  Every recorded business is remembered automatically for next time.
 - If a tool returns ok=false, read the error: fix the values and try again, or ask her.
 - Never calculate totals or budgets yourself - get_monthly_summary does that.
 - When all documents are handled, call get_monthly_summary once for EACH month (YYYY-MM of the date)
@@ -63,7 +72,7 @@ Expense categories: {expense_categories}
 Income categories: {income_categories}
 Monthly budgets ({currency}): {budgets}
 
-Known businesses (business -> category), learned from her earlier answers:
+Known businesses (business -> category), learned from earlier runs:
 {known_businesses}"""
 
 # Layer 2: the "menu" of tools. Parameter names are the exact names of the functions in tools.py.
@@ -129,18 +138,6 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "remember_business",
-            "description": "Remember a business's category for next time. Call only after the user confirmed the category.",
-            "parameters": {
-                "type": "object",
-                "properties": {"business": {"type": "string"}, "category": {"type": "string"}},
-                "required": ["business", "category"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "get_monthly_summary",
             "description": "Income, expenses by category, balance and budget status (ok / near / over) for one month. "
                            "The summary is shown to the user.",
@@ -176,9 +173,17 @@ _TOOL_FUNCTIONS = {
     "read_document": tools.read_document,
     "find_duplicate": tools.find_duplicate,
     "add_transaction": tools.add_transaction,
-    "remember_business": tools.remember_business,
     "get_monthly_summary": tools.get_monthly_summary,
 }
+
+
+@dataclass
+class _RunState:
+    """What Python remembers during one run, to enforce rules the prompt alone did not keep."""
+    recorded: int = 0
+    warned: set[str] = field(default_factory=set)    # files whose reading had warnings
+    answers: dict[str, list[str]] = field(default_factory=dict)  # file -> her answers about it
+    documents: dict[str, str] = field(default_factory=dict)  # file -> "business · date · amount"
 
 
 def _system_prompt() -> str:
@@ -196,12 +201,31 @@ def _system_prompt() -> str:
     )
 
 
-def _run_tool(name: str, raw_args: str, ui: AgentUI, unconfirmed: set[str]) -> dict:
-    """Run one tool the model asked for. Mistakes by the model come back as an error it can read.
+def _describe_document(reading: dict) -> str:
+    """One line that tells her which document a question is about (she does not know file names)."""
+    parts = [reading.get("business") or "ללא שם עסק", reading.get("date") or "ללא תאריך"]
+    if reading.get("total") is not None:
+        parts.append(f"{reading['total']:,.2f} {config.CURRENCY}")
+    return " · ".join(parts)
 
-    `unconfirmed` holds files whose reading had warnings and that she has not answered about yet:
-    Python (not only the prompt) makes sure they are not recorded without asking her.
-    """
+
+def _record_refusal(args: dict, state: _RunState) -> str | None:
+    """Rules checked in Python before recording: the model broke both of them in test runs."""
+    file = args.get("source_file")
+    if not isinstance(file, str):
+        return None
+    answers = state.answers.get(file, [])
+    if file in state.warned and not answers:
+        return (f"בקריאת '{file}' היו אזהרות – יש לשאול את המשתמשת על הקובץ הזה "
+                "(ask_user עם file) לפני הרישום")
+    if args.get("category") == "אחר" and not any("אחר" in a for a in answers):
+        return ("'אחר' רק אם המשתמשת בחרה בו – יש לשאול אותה על הקטגוריה (ask_user עם file "
+                "ו-2-4 קטגוריות אפשריות)")
+    return None
+
+
+def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
+    """Run one tool the model asked for. Mistakes by the model come back as an error it can read."""
     try:
         args = json.loads(raw_args or "{}")
     except json.JSONDecodeError:
@@ -214,16 +238,18 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, unconfirmed: set[str]) -> d
         question = args.get("question")
         if not isinstance(question, str) or not question.strip():
             return {"ok": False, "error": "חסרה שאלה"}
+        file = args.get("file") if isinstance(args.get("file"), str) else None
+        if file in state.documents:
+            question = f"מסמך: {state.documents[file]}\n\n{question}"
         answer = ui.ask(question, args.get("options"))
         if not answer:
             return {"ok": True, "answer": "", "note": "המשתמשת לא ענתה"}
-        if isinstance(args.get("file"), str):
-            unconfirmed.discard(args["file"])
+        if file:
+            state.answers.setdefault(file, []).append(answer)
         return {"ok": True, "answer": answer}
 
-    if name == "add_transaction" and isinstance(args.get("source_file"), str) and args["source_file"] in unconfirmed:
-        return {"ok": False, "error": f"בקריאת '{args['source_file']}' היו אזהרות – יש לשאול את המשתמשת "
-                                      "על הקובץ הזה (ask_user עם file) לפני הרישום"}
+    if name == "add_transaction" and (refusal := _record_refusal(args, state)):
+        return {"ok": False, "error": refusal}
 
     function = _TOOL_FUNCTIONS.get(name)
     if function is None:
@@ -232,8 +258,10 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, unconfirmed: set[str]) -> d
         result = function(**args)
     except TypeError as e:  # missing or unknown parameter name
         return {"ok": False, "error": f"פרמטרים שגויים ל-{name}: {e}"}
-    if name == "read_document" and result.get("ok") and result.get("warnings"):
-        unconfirmed.add(result["file"])
+    if name == "read_document" and result.get("ok"):
+        state.documents[result["file"]] = _describe_document(result)
+        if result.get("warnings"):
+            state.warned.add(result["file"])
     return result
 
 
@@ -260,14 +288,19 @@ def _api_error_message(error: openai.OpenAIError) -> str:
     return f"שגיאה בפנייה למודל: {error}"
 
 
-def _progress_report(recorded: int) -> str:
-    """What was done before a stop - computed by Python, not the model."""
-    text = f"נרשמו בריצה הזו: {recorded} תנועות (הן שמורות)."
+def _not_recorded() -> list[str]:
+    """Inbox files with no recorded transaction - computed by Python, not the model."""
     documents = tools.list_documents()
-    if documents.get("ok"):
-        left = [d["file"] for d in documents["documents"] if not d["already_recorded"]]
-        if left:
-            text += "\nלא טופלו עדיין: " + ", ".join(left) + "\nאפשר להריץ שוב כדי להמשיך."
+    if not documents.get("ok"):
+        return []
+    return [d["file"] for d in documents["documents"] if not d["already_recorded"]]
+
+
+def _progress_report(recorded: int) -> str:
+    """What was done before a stop."""
+    text = f"נרשמו בריצה הזו: {recorded} תנועות (הן שמורות)."
+    if left := _not_recorded():
+        text += "\nלא טופלו עדיין: " + ", ".join(left) + "\nאפשר להריץ שוב כדי להמשיך."
     return text
 
 
@@ -277,19 +310,18 @@ def run(ui: AgentUI) -> None:
     Raises AgentStopped (API problem or Ctrl+C) and storage.StorageError (damaged data file);
     the caller shows them to the user.
     """
-    recorded = [0]  # a list so _loop can update it and the count survives an exception
+    state = _RunState()  # outside _loop, so the count survives an exception
     try:
-        _loop(ui, recorded)
+        _loop(ui, state)
     except (KeyboardInterrupt, EOFError):  # Ctrl+C (or Ctrl+Z at a question)
-        raise AgentStopped("עצרת את הריצה.\n" + _progress_report(recorded[0])) from None
+        raise AgentStopped("עצרת את הריצה.\n" + _progress_report(state.recorded)) from None
     except openai.OpenAIError as e:
-        raise AgentStopped(_api_error_message(e) + "\n" + _progress_report(recorded[0])) from e
+        raise AgentStopped(_api_error_message(e) + "\n" + _progress_report(state.recorded)) from e
 
 
-def _loop(ui: AgentUI, recorded: list[int]) -> None:
+def _loop(ui: AgentUI, state: _RunState) -> None:
     client = openai.OpenAI(timeout=config.MODEL_TIMEOUT_SECONDS)
     messages = [{"role": "system", "content": _system_prompt()}]
-    unconfirmed: set[str] = set()
 
     for _ in range(config.MAX_STEPS):
         response = client.chat.completions.create(model=config.MODEL, messages=messages, tools=TOOL_DEFINITIONS)
@@ -297,22 +329,26 @@ def _loop(ui: AgentUI, recorded: list[int]) -> None:
         messages.append(message.model_dump(exclude_none=True))
 
         if not message.tool_calls:  # no tool chosen: the model says it is done
-            ui.final(message.content or "סיימתי.")
+            text = message.content or "סיימתי."
+            # A safety net: in run 2 the model forgot documents she had approved
+            if left := _not_recorded():
+                text += "\n\nקבצים שלא נרשמו (לבדוק שזה בכוונה): " + ", ".join(left)
+            ui.final(text)
             return
 
         ui.thinking(message.content or "")
         for call in message.tool_calls:
             name = call.function.name
-            result = _run_tool(name, call.function.arguments, ui, unconfirmed)
+            result = _run_tool(name, call.function.arguments, ui, state)
             ui.tool_result(name, result)
             if result.get("ok") and name == "get_monthly_summary":
                 ui.show_summary(result)
             if result.get("ok") and name == "add_transaction":
-                recorded[0] += 1
+                state.recorded += 1
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.id,
                 "content": json.dumps(result, ensure_ascii=False),
             })
 
-    ui.final(f"עצרתי: הגעתי למגבלה של {config.MAX_STEPS} צעדים לפני שסיימתי.\n" + _progress_report(recorded[0]))
+    ui.final(f"עצרתי: הגעתי למגבלה של {config.MAX_STEPS} צעדים לפני שסיימתי.\n" + _progress_report(state.recorded))

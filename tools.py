@@ -91,11 +91,13 @@ READ_PROMPT = """You read ONE image of an Israeli financial document and extract
 Report only what is printed. Never guess: if a field cannot be read, use null.
 
 document_type:
-- "receipt": a purchase at a store or restaurant
+- "receipt": any proof of money paid (קבלה / חשבונית מס קבלה / חשבונית מס) - a store, restaurant,
+  online order, service, lesson, tuition (שכר לימוד) or donation (קבלה על תרומה)
 - "bill": a utility / municipal / phone / internet bill (חשבון)
 - "payslip": a salary slip (תלוש שכר)
 - "refund": a credit note or returned goods (זיכוי)
-- "other": not a financial document
+- "other": not a proof of payment - e.g. a bank statement, a price quote or an order that does
+  not say it was paid
 
 readable is about image quality only:
 - false if the image is too blurry, dark, small or cut off to read every digit of the total with
@@ -104,13 +106,17 @@ readable is about image quality only:
 - true for a clear image even if it is not a financial document (then document_type is "other").
 
 business: who issued the document (store, company, employer), as printed, in its original language,
-without labels or punctuation around it. Not the customer or the employee.
+without labels or punctuation around it. Not the customer or the employee. Prefer the trade name
+shown in the logo or header (e.g. "H&M", "הבירה בית ספר לנהיגה") over the legal company name in small
+print (e.g. "מאצי ריטייל בע"מ"); use the legal name only if there is no other name.
 
 date_printed: the document's date copied exactly as printed (e.g. "03/03/10"), without the time.
 Do not convert or reorder it.
 - receipt / refund: the purchase date
-- bill: the issue date (תאריך הפקה / תאריך עריכה), not the billing period or the due date
-- payslip: the issue date (הודפס בתאריך), not the salary month
+- bill: the issue date (תאריך הפקה / תאריך עריכה / תאריך עריכת החשבון - the label may be on the line
+  above the date), not the billing period or the due date
+- payslip: the issue date (הודפס בתאריך) if printed; otherwise the last day of the salary month
+  (e.g. "תלוש לחודש יוני 2026" -> "30/06/2026")
 
 billing_period_end_printed: bills only - the last day of the billing period (תקופת החשבון), exactly as
 printed. null for other documents.
@@ -227,6 +233,25 @@ def _parse_printed_date(printed: str | None) -> str | None:
         return None
 
 
+def _likely_misread_year(date: str) -> str | None:
+    """The same day and month in the current year, if that is recent - the year was probably misread.
+
+    In tests a photo of 22/10/26 was read as 22/10/24. An old date that does not fit this
+    pattern (e.g. 17/12/25, read correctly) is not questioned.
+    """
+    today = calendar_date.today()
+    read = calendar_date.fromisoformat(date)
+    if read.year == today.year:
+        return None
+    try:
+        this_year = read.replace(year=today.year)
+    except ValueError:  # 29/02 in a non-leap year
+        return None
+    if 0 <= (today - this_year).days <= config.YEAR_MISREAD_DAYS:
+        return this_year.isoformat()
+    return None
+
+
 def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
     """Checks done in Python on what the model read. Adds computed fields.
 
@@ -240,6 +265,8 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
         warnings.append("זה לא נראה כמו קבלה, חשבון או תלוש – לא לרשום בלי לשאול את המשתמשת")
     if reading["total"] is None:
         warnings.append("לא נמצא סכום כולל")
+    if reading["business"] is None:
+        warnings.append("לא נמצא שם עסק – לשאול את המשתמשת (לא לרשום שם כמו 'לא ידוע')")
 
     reading["date"] = _parse_printed_date(reading["date_printed"])
     if reading["date_printed"] is None:
@@ -248,10 +275,10 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
         warnings.append(f"לא הצלחתי להבין את התאריך '{reading['date_printed']}' – לשאול את המשתמשת")
     elif problem := _check_date(reading["date"]):
         warnings.append(f"{problem} (מודפס: {reading['date_printed']})")
-    elif (calendar_date.today() - calendar_date.fromisoformat(reading["date"])).days > config.MAX_DOCUMENT_AGE_DAYS:
+    elif likely := _likely_misread_year(reading["date"]):
         warnings.append(
-            f"התאריך {reading['date']} ישן מ-{config.MAX_DOCUMENT_AGE_DAYS} יום – ייתכן שהשנה או החודש "
-            "נקראו לא נכון; לוודא עם המשתמשת"
+            f"ייתכן שהשנה נקראה לא נכון: נקרא {reading['date']}, אולי {likely} (מודפס: {reading['date_printed']}) – "
+            "לוודא עם המשתמשת"
         )
 
     # Cross-check: a bill is issued after its billing period ends. In tests the model
@@ -333,9 +360,10 @@ def read_document(file: str) -> dict:
 
 def add_transaction(type: str, date: str, amount: float, category: str, business: str,
                     source_file: str, items: list[str] | None = None) -> dict:
-    """Validate and save one expense or income.
+    """Validate and save one expense or income, and remember the business's category for next time.
 
     A refund is an expense with a negative amount (not income). For a payslip, amount is the net pay.
+    Remembering is done here, not left to the model: in run 2 it remembered only 1 of 16 businesses.
     """
     if type not in ("expense", "income"):
         return _error(f"type חייב להיות 'expense' או 'income' (התקבל: {type!r})")
@@ -371,7 +399,10 @@ def add_transaction(type: str, date: str, amount: float, category: str, business
     }
     transactions.append(transaction)
     storage.save_transactions(transactions)
-    return {"ok": True, "transaction": transaction}
+    learned = storage.load_memory()["business_categories"].get(transaction["business"]) != category
+    if learned:
+        remember_business(transaction["business"], category)
+    return {"ok": True, "transaction": transaction, "learned_business": learned}
 
 
 def find_duplicate(date: str, amount: float, source_file: str | None = None) -> dict:
@@ -403,7 +434,7 @@ def find_duplicate(date: str, amount: float, source_file: str | None = None) -> 
 
 
 def remember_business(business: str, category: str) -> dict:
-    """Remember which category a business belongs to. Call only after the user confirmed it."""
+    """Remember which category a business belongs to (called by add_transaction)."""
     if not isinstance(business, str) or not business.strip():
         return _error("חסר שם העסק")
     if category not in config.EXPENSE_CATEGORIES + config.INCOME_CATEGORIES:

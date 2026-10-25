@@ -196,15 +196,16 @@ class TerminalUI(AgentUI):
             return f"{kind} | {business} | {date} | {total}"
         if name == "add_transaction":
             t = result["transaction"]
-            return (f"נרשם {t['id']}: {_TRANSACTION_TYPES.get(t['type'], t['type'])} {_money(t['amount'])}"
+            text = (f"נרשם {t['id']}: {_TRANSACTION_TYPES.get(t['type'], t['type'])} {_money(t['amount'])}"
                     f" – {t['category']} ({t['business']})")
+            if result.get("learned_business"):
+                text += " · נשמר בזיכרון לפעם הבאה"
+            return text
         if name == "find_duplicate":
             if not result["possible_duplicate"]:
                 return "לא נמצאה כפילות"
             found = ", ".join(f"{c.get('id')} {c.get('business', '')}" for c in result["candidates"])
             return f"נמצאו תנועות דומות: {found}"
-        if name == "remember_business":
-            return f"נשמר בזיכרון: {result['business']} ← {result['category']}"
         if name == "get_monthly_summary":
             return f"סיכום חודש {result['month']}: {result['transaction_count']} תנועות"
         return name
