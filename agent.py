@@ -30,8 +30,13 @@ RULES
   candidates may be the same document with a slightly different business name ("שופרסל" /
   "שופרסל דיל") - compare and decide. If you are not sure, ask her.
 - read_document "warnings" mean the reading may be wrong: do not record blindly. Ask her, say
-  what looks wrong, and record only what she confirms (or skip if she says so).
+  what looks wrong, and record only what she confirms (or skip if she says so). add_transaction
+  refuses a file with warnings until she has answered a question about that file.
   "info" is for your knowledge only and does not block recording.
+- Questions: ask about ONE document per ask_user call and pass its file name in "file". Give
+  options that fit that document (e.g. "לרשום" / "לדלג" / likely categories). When you need a
+  value only she can type (e.g. a business name), ask without options. If she gives no answer,
+  do not record that document and mention it in the final report.
 - If read_document returns an error (e.g. a blurry image), do not record anything for that file;
   tell her in the final report which files to upload again.
 - If the business name is missing, ask her for it. Never record a placeholder such as "לא ידוע"
@@ -42,7 +47,7 @@ RULES
 - Category: a known business (list below) gets its category without asking. Otherwise choose
   from the business name and the items only if it is obvious. If not obvious, ask her with
   ask_user and offer 2-4 likely categories as options; after she answers, call remember_business
-  so you will not ask again.
+  so you will not ask again. "אחר" is not a way to avoid asking - use it only if she chose it.
 - If a tool returns ok=false, read the error: fix the values and try again, or ask her.
 - Never calculate totals or budgets yourself - get_monthly_summary does that.
 - When all documents are handled, call get_monthly_summary once for EACH month (YYYY-MM of the date)
@@ -155,6 +160,7 @@ TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {
                     "question": {"type": "string"},
+                    "file": {"type": "string", "description": "The document this question is about (one per question)"},
                     "options": {"type": "array", "items": {"type": "string"},
                                 "description": "Optional likely answers (e.g. 2-4 categories); she picks one by number"},
                 },
@@ -190,8 +196,12 @@ def _system_prompt() -> str:
     )
 
 
-def _run_tool(name: str, raw_args: str, ui: AgentUI) -> dict:
-    """Run one tool the model asked for. Mistakes by the model come back as an error it can read."""
+def _run_tool(name: str, raw_args: str, ui: AgentUI, unconfirmed: set[str]) -> dict:
+    """Run one tool the model asked for. Mistakes by the model come back as an error it can read.
+
+    `unconfirmed` holds files whose reading had warnings and that she has not answered about yet:
+    Python (not only the prompt) makes sure they are not recorded without asking her.
+    """
     try:
         args = json.loads(raw_args or "{}")
     except json.JSONDecodeError:
@@ -207,15 +217,24 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI) -> dict:
         answer = ui.ask(question, args.get("options"))
         if not answer:
             return {"ok": True, "answer": "", "note": "המשתמשת לא ענתה"}
+        if isinstance(args.get("file"), str):
+            unconfirmed.discard(args["file"])
         return {"ok": True, "answer": answer}
+
+    if name == "add_transaction" and isinstance(args.get("source_file"), str) and args["source_file"] in unconfirmed:
+        return {"ok": False, "error": f"בקריאת '{args['source_file']}' היו אזהרות – יש לשאול את המשתמשת "
+                                      "על הקובץ הזה (ask_user עם file) לפני הרישום"}
 
     function = _TOOL_FUNCTIONS.get(name)
     if function is None:
         return {"ok": False, "error": f"אין כלי בשם '{name}'. הכלים: {', '.join(_TOOL_FUNCTIONS)}, ask_user"}
     try:
-        return function(**args)
+        result = function(**args)
     except TypeError as e:  # missing or unknown parameter name
         return {"ok": False, "error": f"פרמטרים שגויים ל-{name}: {e}"}
+    if name == "read_document" and result.get("ok") and result.get("warnings"):
+        unconfirmed.add(result["file"])
+    return result
 
 
 class AgentStopped(Exception):
@@ -270,6 +289,7 @@ def run(ui: AgentUI) -> None:
 def _loop(ui: AgentUI, recorded: list[int]) -> None:
     client = openai.OpenAI(timeout=config.MODEL_TIMEOUT_SECONDS)
     messages = [{"role": "system", "content": _system_prompt()}]
+    unconfirmed: set[str] = set()
 
     for _ in range(config.MAX_STEPS):
         response = client.chat.completions.create(model=config.MODEL, messages=messages, tools=TOOL_DEFINITIONS)
@@ -283,7 +303,7 @@ def _loop(ui: AgentUI, recorded: list[int]) -> None:
         ui.thinking(message.content or "")
         for call in message.tool_calls:
             name = call.function.name
-            result = _run_tool(name, call.function.arguments, ui)
+            result = _run_tool(name, call.function.arguments, ui, unconfirmed)
             ui.tool_result(name, result)
             if result.get("ok") and name == "get_monthly_summary":
                 ui.show_summary(result)

@@ -21,3 +21,6 @@ venv/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Old sample images taken out of inbox/ (same reason)
+old_samples/
