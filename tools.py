@@ -295,6 +295,7 @@ def read_document(file: str) -> dict:
     """Read one image from inbox/ with the model and return structured data plus warnings.
 
     `file` is a file name as returned by list_documents (not a path).
+    Raises openai.OpenAIError for problems that are not about this image (connection, credit, key).
     """
     if not isinstance(file, str) or not file.strip():
         return _error("חסר שם קובץ")
@@ -315,8 +316,10 @@ def read_document(file: str) -> dict:
     except openai.BadRequestError as e:
         # Usually a damaged file or a file that is not really an image
         return _error(f"המודל לא הצליח לפתוח את '{file}' – ייתכן שהקובץ פגום או שאינו תמונה ({e.message})")
-    except openai.OpenAIError as e:
-        return _error(f"שגיאה בפנייה למודל: {e}")
+    except openai.APITimeoutError:
+        return _error(f"קריאת '{file}' לקחה יותר מ-{config.READ_TIMEOUT_SECONDS} שניות – אפשר לנסות שוב בהמשך")
+    # Other API errors (no internet, no credit, wrong key) are not about this image: they would
+    # fail for every image, so they are not caught here - they stop the run (see agent.run).
     except ValueError as e:  # also json.JSONDecodeError
         return _error(f"התקבלה תשובה לא תקינה מהמודל: {e}")
 

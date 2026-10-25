@@ -20,6 +20,8 @@ READ_REASONING_EFFORT = "medium"
 # --- Agent limits ---
 # Stop condition: the agent never runs more than this many steps.
 MAX_STEPS = 25
+# Seconds to wait for one answer of the loop model (the SDK default is 10 minutes).
+MODEL_TIMEOUT_SECONDS = 60
 
 # --- Paths ---
 BASE_DIR = Path(__file__).resolve().parent
@@ -86,7 +88,7 @@ def check_config() -> None:
     if READ_REASONING_EFFORT not in ("none", "low", "medium", "high"):
         problems.append("READ_REASONING_EFFORT חייב להיות none / low / medium / high")
     for name, value in (("MAX_IMAGE_MB", MAX_IMAGE_MB), ("MAX_DOCUMENT_AGE_DAYS", MAX_DOCUMENT_AGE_DAYS), ("READ_TIMEOUT_SECONDS", READ_TIMEOUT_SECONDS),
-                        ("AMOUNT_TOLERANCE", AMOUNT_TOLERANCE)):
+                        ("MODEL_TIMEOUT_SECONDS", MODEL_TIMEOUT_SECONDS), ("AMOUNT_TOLERANCE", AMOUNT_TOLERANCE)):
         if not isinstance(value, (int, float)) or value <= 0:
             problems.append(f"{name} חייב להיות מספר חיובי")
     for name, categories in (("EXPENSE_CATEGORIES", EXPENSE_CATEGORIES), ("INCOME_CATEGORIES", INCOME_CATEGORIES)):

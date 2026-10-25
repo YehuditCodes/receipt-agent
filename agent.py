@@ -218,9 +218,32 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI) -> dict:
         return {"ok": False, "error": f"פרמטרים שגויים ל-{name}: {e}"}
 
 
-def _stopped_report(recorded: int) -> str:
-    """What to tell the user when the step limit is reached - computed by Python, not the model."""
-    text = f"עצרתי: הגעתי למגבלה של {config.MAX_STEPS} צעדים לפני שסיימתי.\nנרשמו בריצה הזו: {recorded} תנועות."
+class AgentStopped(Exception):
+    """The run stopped before its goal (API problem or Ctrl+C). The message says why and what was saved."""
+
+
+def _api_error_message(error: openai.OpenAIError) -> str:
+    """A Hebrew explanation of an API problem, with what to do about it."""
+    if isinstance(error, openai.APITimeoutError):  # before APIConnectionError: it is a subclass
+        return "המודל לא ענה בזמן – ייתכן שהחיבור לאינטרנט איטי. נסי שוב בעוד כמה דקות."
+    if isinstance(error, openai.APIConnectionError):
+        return "אין חיבור לשרת של OpenAI. בדקי את החיבור לאינטרנט ונסי שוב."
+    if isinstance(error, openai.AuthenticationError):
+        return "מפתח ה-API לא תקין. בדקי את משתנה הסביבה OPENAI_API_KEY (ראו README)."
+    if isinstance(error, openai.RateLimitError):
+        if error.code == "insufficient_quota":
+            return "נגמר הקרדיט בחשבון OpenAI. יש להטעין יתרה ב-platform.openai.com ולהריץ שוב."
+        return "יותר מדי בקשות ל-OpenAI בזמן קצר. נסי שוב בעוד דקה."
+    if isinstance(error, (openai.NotFoundError, openai.PermissionDeniedError)):
+        return f"אין גישה למודל ({config.MODEL} / {config.READ_MODEL}). בדקי את MODEL ו-READ_MODEL ב-config.py."
+    if isinstance(error, openai.InternalServerError):
+        return "תקלה זמנית בשרתים של OpenAI. נסי שוב מאוחר יותר."
+    return f"שגיאה בפנייה למודל: {error}"
+
+
+def _progress_report(recorded: int) -> str:
+    """What was done before a stop - computed by Python, not the model."""
+    text = f"נרשמו בריצה הזו: {recorded} תנועות (הן שמורות)."
     documents = tools.list_documents()
     if documents.get("ok"):
         left = [d["file"] for d in documents["documents"] if not d["already_recorded"]]
@@ -232,12 +255,21 @@ def _stopped_report(recorded: int) -> str:
 def run(ui: AgentUI) -> None:
     """Run the agent until it reaches its goal or the step limit.
 
-    Raises storage.StorageError (damaged data file) and openai.OpenAIError (API problem);
+    Raises AgentStopped (API problem or Ctrl+C) and storage.StorageError (damaged data file);
     the caller shows them to the user.
     """
-    client = openai.OpenAI()
+    recorded = [0]  # a list so _loop can update it and the count survives an exception
+    try:
+        _loop(ui, recorded)
+    except (KeyboardInterrupt, EOFError):  # Ctrl+C (or Ctrl+Z at a question)
+        raise AgentStopped("עצרת את הריצה.\n" + _progress_report(recorded[0])) from None
+    except openai.OpenAIError as e:
+        raise AgentStopped(_api_error_message(e) + "\n" + _progress_report(recorded[0])) from e
+
+
+def _loop(ui: AgentUI, recorded: list[int]) -> None:
+    client = openai.OpenAI(timeout=config.MODEL_TIMEOUT_SECONDS)
     messages = [{"role": "system", "content": _system_prompt()}]
-    recorded = 0
 
     for _ in range(config.MAX_STEPS):
         response = client.chat.completions.create(model=config.MODEL, messages=messages, tools=TOOL_DEFINITIONS)
@@ -256,11 +288,11 @@ def run(ui: AgentUI) -> None:
             if result.get("ok") and name == "get_monthly_summary":
                 ui.show_summary(result)
             if result.get("ok") and name == "add_transaction":
-                recorded += 1
+                recorded[0] += 1
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.id,
                 "content": json.dumps(result, ensure_ascii=False),
             })
 
-    ui.final(_stopped_report(recorded))
+    ui.final(f"עצרתי: הגעתי למגבלה של {config.MAX_STEPS} צעדים לפני שסיימתי.\n" + _progress_report(recorded[0]))

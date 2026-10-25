@@ -3,8 +3,6 @@
 import os
 import sys
 
-import openai
-
 import agent
 import config
 from storage import StorageError
@@ -27,8 +25,8 @@ def main() -> int:
     except StorageError as e:  # a damaged data file: stop without touching it
         ui.error(str(e))
         return 1
-    except openai.OpenAIError as e:
-        ui.error(f"שגיאה בפנייה למודל: {e}")
+    except agent.AgentStopped as e:  # API problem or Ctrl+C - already explained, with what was saved
+        ui.error(str(e))
         return 1
     return 0
 
