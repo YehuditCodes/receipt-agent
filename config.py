@@ -32,6 +32,9 @@ SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_IMAGE_MB = 10
 # Seconds to wait for the model to read one image.
 READ_TIMEOUT_SECONDS = 90
+# A document older than this is probably a misread year (in tests: 22/10/26 read as 22/10/24),
+# so the agent asks before recording it.
+MAX_DOCUMENT_AGE_DAYS = 90
 # Cross-checks (items vs total, payments vs total) allow this much difference (₪) for rounding.
 AMOUNT_TOLERANCE = 0.5
 
@@ -79,7 +82,7 @@ def check_config() -> None:
         problems.append("BUDGET_WARNING_RATIO חייב להיות בין 0 ל-1")
     if READ_REASONING_EFFORT not in ("none", "low", "medium", "high"):
         problems.append("READ_REASONING_EFFORT חייב להיות none / low / medium / high")
-    for name, value in (("MAX_IMAGE_MB", MAX_IMAGE_MB), ("READ_TIMEOUT_SECONDS", READ_TIMEOUT_SECONDS),
+    for name, value in (("MAX_IMAGE_MB", MAX_IMAGE_MB), ("MAX_DOCUMENT_AGE_DAYS", MAX_DOCUMENT_AGE_DAYS), ("READ_TIMEOUT_SECONDS", READ_TIMEOUT_SECONDS),
                         ("AMOUNT_TOLERANCE", AMOUNT_TOLERANCE)):
         if not isinstance(value, (int, float)) or value <= 0:
             problems.append(f"{name} חייב להיות מספר חיובי")

@@ -248,6 +248,11 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
         warnings.append(f"לא הצלחתי להבין את התאריך '{reading['date_printed']}' – לשאול את המשתמשת")
     elif problem := _check_date(reading["date"]):
         warnings.append(f"{problem} (מודפס: {reading['date_printed']})")
+    elif (calendar_date.today() - calendar_date.fromisoformat(reading["date"])).days > config.MAX_DOCUMENT_AGE_DAYS:
+        warnings.append(
+            f"התאריך {reading['date']} ישן מ-{config.MAX_DOCUMENT_AGE_DAYS} יום – ייתכן שהשנה או החודש "
+            "נקראו לא נכון; לוודא עם המשתמשת"
+        )
 
     # Cross-check: a bill is issued after its billing period ends. In tests the model
     # sometimes returned the period end instead of the issue date.
