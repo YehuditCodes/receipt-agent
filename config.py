@@ -4,7 +4,10 @@ from pathlib import Path
 
 # --- Model ---
 # The API key is NOT here: it is read from the OPENAI_API_KEY environment variable.
-MODEL = "gpt-4o-mini"
+# Model that runs the agent loop (chooses the tools). Chosen by a test on the same 2 images:
+# gpt-4o-mini skipped the duplicate check, guessed a missing store name, summarized the wrong
+# month and never explained its steps; gpt-5.4-mini followed the rules.
+MODEL = "gpt-5.4-mini"
 # Model that reads the receipt images (read_document). Chosen by a test on real phone photos:
 # gpt-4o-mini misread 4 of 5 totals and invented an amount from a blurry image;
 # gpt-5.4-mini read all totals correctly and refused to guess from a blurry image.
