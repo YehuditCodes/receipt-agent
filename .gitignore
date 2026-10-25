@@ -1,0 +1,22 @@
+# Secrets - never commit API keys
+.env
+*.key
+
+# Personal financial data produced by the agent
+data/*.json
+
+# Receipt / payslip images (may contain personal details)
+inbox/*
+!inbox/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
