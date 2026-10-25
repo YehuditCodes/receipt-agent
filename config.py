@@ -49,3 +49,20 @@ BUDGETS = {
     "ביגוד והנעלה": 400,
     "פנאי ובילויים": 400,
 }
+
+
+def check_config() -> None:
+    """Catch typos in the settings above before the agent starts. Raises ValueError."""
+    problems = []
+    if not isinstance(MAX_STEPS, int) or MAX_STEPS < 1:
+        problems.append("MAX_STEPS חייב להיות מספר שלם חיובי")
+    for name, categories in (("EXPENSE_CATEGORIES", EXPENSE_CATEGORIES), ("INCOME_CATEGORIES", INCOME_CATEGORIES)):
+        if len(set(categories)) != len(categories):
+            problems.append(f"יש קטגוריה כפולה ב-{name}")
+    for category, amount in BUDGETS.items():
+        if category not in EXPENSE_CATEGORIES:
+            problems.append(f"לתקציב '{category}' אין קטגוריית הוצאה כזו")
+        if not isinstance(amount, (int, float)) or amount <= 0:
+            problems.append(f"התקציב של '{category}' חייב להיות מספר חיובי")
+    if problems:
+        raise ValueError("בעיה בהגדרות (config.py):\n- " + "\n- ".join(problems))

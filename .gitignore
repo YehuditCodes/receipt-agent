@@ -2,8 +2,9 @@
 .env
 *.key
 
-# Personal financial data produced by the agent
-data/*.json
+# Personal financial data produced by the agent (incl. .bak backups and .tmp files)
+data/*
+!data/.gitkeep
 
 # Receipt / payslip images (may contain personal details)
 inbox/*

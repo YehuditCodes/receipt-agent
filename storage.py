@@ -8,6 +8,7 @@ They are separate so a month can be reset without the agent forgetting what it l
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
 import config
@@ -22,31 +23,49 @@ def _read_json(path: Path, default, expected_type: type):
     if not path.exists():
         return default
     try:
-        with path.open(encoding="utf-8") as f:
+        # utf-8-sig: also accepts files saved by Notepad (which may add an invisible BOM)
+        with path.open(encoding="utf-8-sig") as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
         # Never overwrite a damaged file - that could lose real data.
         raise StorageError(
             f"הקובץ {path.name} פגום ולא ניתן לקרוא אותו (שורה {e.lineno}). "
-            f"יש לתקן או למחוק אותו ולהריץ שוב. הקובץ לא שונה."
+            f"יש לתקן או למחוק אותו ולהריץ שוב. הקובץ לא שונה.{_backup_hint(path)}"
         ) from e
     except OSError as e:
         raise StorageError(f"לא ניתן לפתוח את הקובץ {path.name}: {e}") from e
 
     if not isinstance(data, expected_type):
         raise StorageError(
-            f"הקובץ {path.name} במבנה לא צפוי. יש לתקן או למחוק אותו ולהריץ שוב. הקובץ לא שונה."
+            f"הקובץ {path.name} במבנה לא צפוי. יש לתקן או למחוק אותו ולהריץ שוב. "
+            f"הקובץ לא שונה.{_backup_hint(path)}"
         )
     return data
 
 
+def _backup_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".bak")
+
+
+def _backup_hint(path: Path) -> str:
+    backup = _backup_path(path)
+    if backup.exists():
+        return f" קיים גיבוי של הגרסה הקודמת: {backup} – אפשר להעתיק אותו במקום הקובץ."
+    return ""
+
+
 def _write_json(path: Path, data) -> None:
-    """Write safely: to a temp file first, then replace, so a crash mid-write can't corrupt the file."""
+    """Write safely: to a temp file first, then replace, so a crash mid-write can't corrupt the file.
+
+    The previous version is kept as <name>.bak, so a damaged file can be restored by hand.
+    """
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with tmp_path.open("w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        if path.exists():
+            shutil.copy2(path, _backup_path(path))
         os.replace(tmp_path, path)
     except OSError as e:
         raise StorageError(f"לא ניתן לשמור את הקובץ {path.name}: {e}") from e
