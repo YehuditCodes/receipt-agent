@@ -106,15 +106,17 @@ readable is about image quality only:
 - true for a clear image even if it is not a financial document (then document_type is "other").
 
 business: who issued the document (store, company, employer), as printed, in its original language,
-without labels or punctuation around it. Not the customer or the employee. Prefer the trade name
-shown in the logo or header (e.g. "H&M", "הבירה בית ספר לנהיגה") over the legal company name in small
-print (e.g. "מאצי ריטייל בע"מ"); use the legal name only if there is no other name.
+without labels or punctuation around it. Not the customer or the employee. Use the name in the
+header at the TOP of the document - prefer the trade name there (e.g. "H&M", "הבירה בית ספר לנהיגה")
+over the legal company name in small print (e.g. "מאצי ריטייל בע"מ"). Ignore logos and names in the
+background, in a watermark, in an advertisement or at the bottom of the document.
 
 date_printed: the document's date copied exactly as printed (e.g. "03/03/10"), without the time.
 Do not convert or reorder it.
 - receipt / refund: the purchase date
-- bill: the issue date (תאריך הפקה / תאריך עריכה / תאריך עריכת החשבון - the label may be on the line
-  above the date), not the billing period or the due date
+- bill: the issue date, labeled תאריך הפקה / תאריך עריכה / תאריך עריכת החשבון (the label may be on
+  the line above the date). It is a separate date, usually a few weeks AFTER the billing period:
+  never take a date from the period line (מ- ... עד ... / תקופת החשבון) or the due date (לשלם עד)
 - payslip: the issue date (הודפס בתאריך) if printed; otherwise the last day of the salary month
   (e.g. "תלוש לחודש יוני 2026" -> "30/06/2026")
 
