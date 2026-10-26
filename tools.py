@@ -1,6 +1,7 @@
 """The agent's tools: listing files, reading an image, saving, duplicate check, monthly summary.
 
 Only read_document uses AI (it sends the image to the model); the rest is plain Python.
+read_document also looks up company numbers in the public companies registry (no AI).
 
 Every tool returns a dict and never raises for bad input: {"ok": True, ...} or
 {"ok": False, "error": "..."}. The model reads the error and decides what to do next
@@ -10,13 +11,17 @@ file) is raised, because then the agent must stop.
 
 import base64
 import copy
+import csv
 import functools
 import hashlib
+import io
 import json
 import math
 import re
+import urllib.parse
+import urllib.request
 # Aliased: "date" is also a tool parameter name (the model sends it by that name)
-from datetime import date as calendar_date, datetime
+from datetime import date as calendar_date, datetime, timedelta
 
 import openai
 
@@ -166,6 +171,8 @@ total: the amount actually paid or received, as a positive number.
 - bill: סה"כ לתשלום
 - payslip: the final לתשלום line (after all deductions), not gross pay; use שכר נטו only if there is no לתשלום line
 - refund: the refunded amount, still positive
+- other (e.g. an invoice that was not paid yet, a price quote): the document's total as printed, so she
+  can decide about it
 Lines such as "you saved" (חסכת / הנחה), VAT (מע"מ) or points are not the total.
 
 payments: how the total was paid, as printed in the payment section - one entry per payment line
@@ -173,6 +180,8 @@ payments: how the total was paid, as printed in the payment section - one entry 
 several entries. Empty if no payment lines are printed. change: the change given back (עודף), or null.
 
 currency: ISO code; ₪ / ש"ח / NIS = "ILS".
+total_ils_printed: only for a total in another currency - the ₪ equivalent of that total if the
+document prints one (e.g. "Equivalent ... NIS", "שווה ערך בש\"ח"), otherwise null.
 
 items: each purchased line with its price, for receipts and refunds only (empty for bills and payslips).
 Copy the names as printed; leave out a line rather than invent it. price is null if it cannot be read.
@@ -207,6 +216,7 @@ READ_SCHEMA = {
         },
         "change": _NULLABLE_NUMBER,
         "currency": _NULLABLE_STRING,
+        "total_ils_printed": _NULLABLE_NUMBER,
         "items": {
             "type": "array",
             "items": {
@@ -219,7 +229,7 @@ READ_SCHEMA = {
         "notes": _NULLABLE_STRING,
     },
     "required": ["readable", "unreadable_reason", "document_type", "business", "tax_id",
-                 "date_printed", "billing_period_end_printed", "total", "payments", "change", "currency", "items", "notes"],
+                 "date_printed", "billing_period_end_printed", "total", "payments", "change", "currency", "total_ils_printed", "items", "notes"],
     "additionalProperties": False,
 }
 
@@ -278,15 +288,31 @@ def _cached_reading(path) -> dict:
     return copy.deepcopy(cache[key])  # _check_reading changes the reading it gets
 
 
+_MONTH_NAMES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+
 def _parse_printed_date(printed: str | None) -> str | None:
     """Israeli day-first date as printed ("03/03/10", "27.02.19", "10/07/2020") -> "YYYY-MM-DD".
 
+    Also an English month name, day first or month first ("08-Sep-26", "8 September 2026",
+    "Sep 8, 2026") - a travel agency receipt had "08-Sep-26" and the agent asked her for the date.
     Done in Python, not by the model: in tests the model converted dates inconsistently.
     """
-    match = re.search(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4}|\d{2})\b", printed or "")
-    if not match:
+    printed = printed or ""
+    if match := re.search(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4}|\d{2})\b", printed):
+        day, month, year = (int(g) for g in match.groups())
+    elif match := re.search(r"\b(\d{1,2})[\s./-]*([A-Za-z]{3})[A-Za-z]*\.?[\s./,-]*(\d{4}|\d{2})\b", printed):
+        day, name, year = int(match[1]), match[2].lower(), int(match[3])
+        if name not in _MONTH_NAMES:
+            return None
+        month = _MONTH_NAMES.index(name) + 1
+    elif match := re.search(r"\b([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b", printed):
+        name, day, year = match[1].lower(), int(match[2]), int(match[3])
+        if name not in _MONTH_NAMES:
+            return None
+        month = _MONTH_NAMES.index(name) + 1
+    else:
         return None
-    day, month, year = (int(g) for g in match.groups())
     if year < 100:
         year += 2000  # receipts are from this century
     try:
@@ -320,6 +346,66 @@ def _likely_misread_year(date: str, printed: str) -> str | None:
     return None
 
 
+@functools.lru_cache(maxsize=256)
+def _exchange_rate(currency: str, day: str) -> tuple[float, str] | None:
+    """Bank of Israel official rate of `currency` in ₪ on `day`, or on the last business day before it.
+
+    Returns (rate, the rate's date), or None if there is no rate. Raises OSError / ValueError /
+    KeyError if the bank cannot be reached or answers badly (errors are not cached).
+    """
+    start = (calendar_date.fromisoformat(day) - timedelta(days=10)).isoformat()
+    query = urllib.parse.urlencode({"startperiod": start, "endperiod": day, "format": "csv"})
+    url = config.EXCHANGE_RATE_URL.format(currency=currency) + "?" + query
+    with urllib.request.urlopen(url, timeout=config.EXCHANGE_RATE_TIMEOUT_SECONDS) as response:
+        rows = list(csv.DictReader(io.StringIO(response.read().decode("utf-8-sig"))))
+    if not rows:
+        return None
+    last = max(rows, key=lambda row: row["TIME_PERIOD"])
+    return float(last["OBS_VALUE"]), last["TIME_PERIOD"]
+
+
+def _convert_to_ils(reading: dict, warnings: list[str], info: list[str]) -> None:
+    """Convert the amounts of a document in a foreign currency to ₪.
+
+    The rate: the document's own ₪ equivalent if it prints one (what was really charged), otherwise
+    the Bank of Israel official rate of its date. The original total, currency and rate go to
+    reading["original"], and add_transaction keeps them.
+    Called after the cross-checks, which compare amounts in the document's own currency.
+    """
+    currency = str(reading["currency"]).upper()
+    total, printed_ils = reading["total"], reading.pop("total_ils_printed", None)
+    if total and printed_ils and printed_ils > 0:
+        rate, source = printed_ils / total, "לפי הסכום בשקלים שמודפס במסמך"
+        rate_date, ils_total = reading["date"], printed_ils
+    else:
+        not_converted = f"המטבע הוא {currency} ולא ₪ – הסכום לא הומר"
+        if not config.USE_ONLINE_LOOKUPS or not re.fullmatch(r"[A-Z]{3}", currency) or not reading["date"]:
+            warnings.append(not_converted)
+            return
+        try:
+            found = _exchange_rate(currency, reading["date"])
+        except (OSError, ValueError, KeyError):  # no internet, unknown currency (404), unexpected answer
+            found = None
+        if found is None:
+            warnings.append(f"{not_converted} (לא נמצא שער יציג של בנק ישראל)")
+            return
+        (rate, rate_date), source = found, "לפי השער היציג של בנק ישראל"
+        ils_total = total * rate if total is not None else None
+    reading["original"] = {"total": total, "currency": currency, "rate": round(rate, 4), "rate_date": rate_date}
+    if ils_total is not None:
+        reading["total"] = _round_money(ils_total)
+    for payment in reading["payments"]:
+        payment["amount"] = _round_money(payment["amount"] * rate)
+    for key in ("change", "paid_total", "items_sum"):
+        if reading.get(key) is not None:
+            reading[key] = _round_money(reading[key] * rate)
+    for item in reading["items"]:
+        if item["price"] is not None:
+            item["price"] = _round_money(item["price"] * rate)
+    reading["currency"] = "ILS"
+    info.append(f"הסכום הומר מ-{currency} {source} (שער {round(rate, 4)}): {total} {currency} = {reading['total']} ₪")
+
+
 def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
     """Checks done in Python on what the model read. Adds computed fields.
 
@@ -334,7 +420,11 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
     if printed_tax_id and not reading["tax_id"]:
         info.append(f"מספר העסק '{printed_tax_id}' לא עבר בדיקת ספרת ביקורת – הזיהוי יהיה לפי השם")
     if reading["document_type"] == "other":
-        warnings.append("זה לא נראה כמו קבלה, חשבון או תלוש – לא לרשום בלי לשאול את המשתמשת")
+        # The reason goes into her question: "it does not look like a receipt" alone did not help her decide
+        warnings.append("זו לא הוכחת תשלום (לא קבלה, חשבון או תלוש)"
+                        + (f": {reading['notes']}" if reading.get("notes") else "")
+                        + ". הוצאה נרשמת לפי הקבלה כשמשלמים – אם נרשום גם את המסמך הזה וגם את הקבלה, "
+                        "הסכום ייספר פעמיים. לא לרשום בלי לשאול את המשתמשת")
     if reading["total"] is None:
         warnings.append("לא נמצא סכום כולל")
     if reading["business"] is None:
@@ -374,7 +464,8 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
             )
 
     if reading["currency"] not in (None, "ILS"):
-        warnings.append(f"המטבע הוא {reading['currency']} ולא ₪ – הסכום לא הומר")
+        _convert_to_ils(reading, warnings, info)
+    reading.pop("total_ils_printed", None)
 
     prices = [i["price"] for i in reading["items"] if i["price"] is not None]
     if prices and reading["total"] is not None:
@@ -388,6 +479,56 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
                 "רשימת הפריטים חלקית; הסה\"כ אמין, הפריטים רק רמז לקטגוריה"
             )
     return warnings, info
+
+
+@functools.lru_cache(maxsize=256)
+def _registry_name(tax_id: str) -> str | None:
+    """A company's legal name from the companies registry, or None if the number is not there.
+
+    Raises OSError / ValueError / KeyError if the registry cannot be reached or answers badly
+    (errors are not cached, so the next document tries again).
+    """
+    query = urllib.parse.urlencode({
+        "resource_id": config.REGISTRY_RESOURCE_ID,
+        "filters": json.dumps({"מספר חברה": int(tax_id)}),
+        "fields": "שם חברה",
+    })
+    with urllib.request.urlopen(f"{config.REGISTRY_URL}?{query}", timeout=config.REGISTRY_TIMEOUT_SECONDS) as response:
+        records = json.loads(response.read())["result"]["records"]
+    if not records:
+        return None
+    # The registry writes ~ for the quote mark ("בע~מ"), and sometimes leaves it out ("בעמ")
+    name = " ".join(str(records[0]["שם חברה"]).replace("~", '"').split())
+    return re.sub(r"\bבעמ$", 'בע"מ', name) or None
+
+
+def _apply_registry_name(reading: dict, warnings: list[str], info: list[str]) -> str | None:
+    """Replace the name read from the image with the company's legal name. Returns that name, or None.
+
+    Her decision: the legal name even when the receipt shows a brand (H&M -> "מאצ' ריטייל") -
+    an unfamiliar but true name is better than a misread one ("שוקי פרר" instead of "שוקי פון").
+    """
+    tax_id = reading["tax_id"]
+    if not config.USE_ONLINE_LOOKUPS or not tax_id or not tax_id.startswith(("51", "52")):
+        return None
+    try:
+        name = _registry_name(tax_id)
+    except (OSError, ValueError, KeyError, TypeError):  # no internet, timeout, unexpected answer
+        info.append("מאגר רשם החברות לא זמין כרגע – השם נשאר כפי שנקרא מהתמונה")
+        return None
+    if name is None:
+        return None
+    def letters(text):
+        return re.sub(r"[\s\"'׳״`-]", "", text or "")
+    if letters(name) == letters(reading["business"]):  # the same name, only spaces or quote marks differ
+        name = reading["business"]
+    elif name != reading["business"]:
+        reading["business_printed"] = reading["business"]
+        reading["business"] = name
+        info.append(f"השם לפי רשם החברות (ח.פ. {tax_id}): {name}. מהתמונה נקרא: {reading['business_printed'] or 'שום שם'}")
+    if _MISSING_BUSINESS in warnings:
+        warnings.remove(_MISSING_BUSINESS)
+    return name
 
 
 def read_document(file: str) -> dict:
@@ -427,7 +568,10 @@ def read_document(file: str) -> dict:
         return _error(f"{reason}. התמונה לא ברורה – יש לבקש מהמשתמשת להעלות אותה שוב")
 
     warnings, info = _check_reading(reading)
+    registry_name = _apply_registry_name(reading, warnings, info)
     known = _known_business(reading["tax_id"], reading["business"])
+    if known and registry_name:  # memory keeps the category; the name may be an earlier misreading
+        known["business"] = registry_name
     if known and reading["business"] is None:  # the number identified it although the name was not read
         reading["business"] = known["business"]
         warnings.remove(_MISSING_BUSINESS)
@@ -435,11 +579,14 @@ def read_document(file: str) -> dict:
 
 
 def add_transaction(type: str, date: str, amount: float, category: str, business: str,
-                    source_file: str, items: list[str] | None = None, tax_id: str | None = None) -> dict:
+                    source_file: str, items: list[str] | None = None, tax_id: str | None = None,
+                    original: dict | None = None) -> dict:
     """Validate and save one expense or income, and remember the business's category for next time.
 
     A refund is an expense with a negative amount (not income). For a payslip, amount is the net pay.
     tax_id (the business number) is optional; an invalid one is ignored, not an error.
+    original: the foreign-currency total and rate from read_document - added by the agent loop,
+    not by the model, so the converted amount can always be traced back.
     Remembering is done here, not left to the model: in run 2 it remembered only 1 of 16 businesses.
     """
     if type not in ("expense", "income"):
@@ -484,6 +631,8 @@ def add_transaction(type: str, date: str, amount: float, category: str, business
         "items": items,
         "added_at": datetime.now().isoformat(timespec="seconds"),
     }
+    if original:
+        transaction["original"] = original
     transactions.append(transaction)
     storage.save_transactions(transactions)
     learned = remember_business(transaction["business"], category, transaction["tax_id"]).get("changed", False)

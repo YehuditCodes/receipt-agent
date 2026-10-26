@@ -52,6 +52,23 @@ AMOUNT_TOLERANCE = 0.5
 
 CURRENCY = "₪"
 
+# --- Online lookups (public open data, no key) ---
+# Both are skipped when False, or when there is no internet (the agent then works as before).
+USE_ONLINE_LOOKUPS = True
+
+# Companies registry (רשם החברות, data.gov.il). A company number (ח.פ. starting with 51 or 52) is
+# looked up to get the company's legal name: it fixes names misread from a photo ("שוקי פון" was read as "שוקי פרר"). Only company numbers
+# are sent - the ע.מ. of a self-employed person is their ID number and never leaves the computer.
+REGISTRY_URL = "https://data.gov.il/api/3/action/datastore_search"
+REGISTRY_RESOURCE_ID = "f004176c-b85f-4542-8901-7b3176f9a054"
+REGISTRY_TIMEOUT_SECONDS = 10
+
+# Bank of Israel official exchange rates (שער יציג). A total in another currency is converted to ₪
+# at the rate of the document's date, or of the last business day before it. The card company's
+# rate may differ a little - the original amount and rate are kept in the transaction.
+EXCHANGE_RATE_URL = "https://edge.boi.gov.il/FusionEdgeServer/sdmx/v2/data/dataflow/BOI.STATISTICS/EXR/1.0/RER_{currency}_ILS"
+EXCHANGE_RATE_TIMEOUT_SECONDS = 10
+
 # --- Categories ---
 # Category is what the money was for; the business (e.g. "חברת החשמל") is stored separately.
 EXPENSE_CATEGORIES = [
@@ -65,6 +82,7 @@ EXPENSE_CATEGORIES = [
     "לימודים",
     "פנאי ובילויים",
     "תרומות",
+    "אלקטרוניקה ותקשורת",
     "אחר",
 ]
 
@@ -86,6 +104,7 @@ CATEGORY_DESCRIPTIONS = {
     "לימודים": "שכר לימוד, קורסים, שיעורים פרטיים, שיעורי נהיגה, ספרי לימוד",
     "פנאי ובילויים": "כלי נגינה, ספרים, תחביבים, הופעות, טיולים, מתנות",
     "תרומות": "קבלה על תרומה, עמותה, צדקה",
+    "אלקטרוניקה ותקשורת": "טלפון נייד, אביזרים לטלפון, מחשב, מוצרי חשמל, תיקון מכשירים (חשבון טלפון חודשי -> חשבונות בית)",
     "אחר": "רק אם המשתמשת בחרה בזה",
 }
 
@@ -119,7 +138,9 @@ def check_config() -> None:
     if READ_REASONING_EFFORT not in ("none", "low", "medium", "high"):
         problems.append("READ_REASONING_EFFORT חייב להיות none / low / medium / high")
     for name, value in (("MAX_IMAGE_MB", MAX_IMAGE_MB), ("YEAR_MISREAD_DAYS", YEAR_MISREAD_DAYS), ("READ_TIMEOUT_SECONDS", READ_TIMEOUT_SECONDS),
-                        ("MODEL_TIMEOUT_SECONDS", MODEL_TIMEOUT_SECONDS), ("AMOUNT_TOLERANCE", AMOUNT_TOLERANCE)):
+                        ("MODEL_TIMEOUT_SECONDS", MODEL_TIMEOUT_SECONDS), ("AMOUNT_TOLERANCE", AMOUNT_TOLERANCE),
+                        ("REGISTRY_TIMEOUT_SECONDS", REGISTRY_TIMEOUT_SECONDS),
+                        ("EXCHANGE_RATE_TIMEOUT_SECONDS", EXCHANGE_RATE_TIMEOUT_SECONDS)):
         if not isinstance(value, (int, float)) or value <= 0:
             problems.append(f"{name} חייב להיות מספר חיובי")
     for name, categories in (("EXPENSE_CATEGORIES", EXPENSE_CATEGORIES), ("INCOME_CATEGORIES", INCOME_CATEGORIES)):

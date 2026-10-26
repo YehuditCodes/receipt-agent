@@ -64,6 +64,7 @@ def main() -> None:
     expected = json.loads((EVALS_DIR / answers_file).read_text(encoding="utf-8"))["documents"]
     config.INBOX_DIR = EVALS_DIR / "images"
     config.USE_READ_CACHE = False  # measure a fresh reading every time
+    config.USE_ONLINE_LOOKUPS = False  # measure the reading itself (no registry names, no currency conversion)
     totals = {field: Counter() for field in FIELDS}
     questions = 0
 

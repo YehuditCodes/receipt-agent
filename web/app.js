@@ -13,7 +13,7 @@ const TOOLS = {
 };
 // One color per expense category, by its place in config.EXPENSE_CATEGORIES (stable between months)
 const PALETTE = ["#6366f1", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#8b5cf6",
-                 "#10b981", "#f97316", "#e11d48", "#84cc16", "#94a3b8"];
+                 "#10b981", "#f97316", "#e11d48", "#84cc16", "#a16207", "#94a3b8"];
 
 const state = {
   month: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,  // local time, not UTC

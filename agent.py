@@ -9,6 +9,7 @@ without calling a tool (goal reached) or after config.MAX_STEPS model calls.
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date as calendar_date
 
@@ -44,10 +45,12 @@ RULES
   "info" is for your knowledge only and does not block recording.
 - Questions: ask about ONE document per ask_user call and pass its file name in "file" (her screen
   then shows the document's business, date and amount above your question). Never mention the file
-  name in the question itself - she does not know file names. Options must be complete actions she
-  can choose without thinking, e.g. "לרשום כהוצאה" / "לא לרשום", or likely categories - never a yes/no
-  question such as "לדלג?". When you need a value only she can type (e.g. a business name, a date),
-  ask without options. Act on her answer right away. If she gives no answer, do not record that
+  name in the question itself - she does not know file names. Ask about the specific problem (the
+  unclear date, amount, name or category), not whether to record it: a receipt or bill is obviously an
+  expense, so never offer "לרשום כהוצאה" for it (only a document of type "other" gets that question).
+  Options must be complete answers she can choose without thinking, e.g. likely categories or the
+  likely value, plus "לא לרשום" - never a yes/no question such as "לדלג?". When you need a value only
+  she can type (e.g. a business name, a date), ask without options. Act on her answer right away. If she gives no answer, do not record that
   document and mention it in the final report.
 - If read_document returns an error (e.g. a blurry image), do not record anything for that file;
   tell her in the final report which files to upload again.
@@ -57,18 +60,27 @@ RULES
 - Type: receipt and bill -> expense; a bill's category is "חשבונות בית". payslip -> income, category
   "משכורת". refund -> expense with a
   NEGATIVE amount, in the category of what was returned. "other" (not a proof of payment) ->
-  ask her whether to record it.
+  ask her whether to record it, and explain why you ask: say what the document is and its amount,
+  and why recording it may be wrong (e.g. an invoice is a demand for payment - the expense is
+  recorded from the receipt when she pays, so recording both counts it twice; mention it if this
+  business is already known). Options e.g. "לא לרשום – אעלה את הקבלה כשאשלם" / "לרשום בכל זאת".
 - Known business: if read_document returns "known_business", this business was recorded before
   (matched by its business number, or by its name) - record it with that business name and category,
   without asking. Pass the document's tax_id to add_transaction.
+- Registry name: if read_document returns "business_printed", the business name was replaced by the
+  company's legal name from the companies registry (found by its number). Record that legal name - it
+  is more reliable than a name read from a photo. It may also tell what kind of business it is.
 - Category: a known business (list below) gets its category without asking. Otherwise choose by
   WHAT WAS PAID FOR (the items / "עבור" line), not by words in a legal company name - e.g. "א.ג.
   נכסים והשקעות בע"מ" with the item "שיעור פסנתר" is a lesson, not housing. Use the category
-  descriptions below. Choose without asking only if it is obvious (a donation receipt -> "תרומות");
-  if the name and the items point to different categories, or a short name could mean several
-  things and there are no items, ask.
-  If not obvious, ask her with ask_user and offer 2-4 likely categories as options. "אחר" is not a
-  way to avoid asking - add_transaction refuses "אחר" unless she chose it for that file.
+  descriptions below. Choose without asking only if the document itself shows it: then pass
+  category_evidence - a word copied exactly from the business name or an item name that shows the
+  category (e.g. "פון" in "שוקי פון" -> electronics, "חלב" in the items -> food). Who the document is
+  addressed to is not evidence. No such word, or the name and the items point to different
+  categories -> ask (add_transaction refuses a new business without evidence found in the document).
+  When you ask, offer 2-4 likely categories, your best guess first with " (מומלץ)" after it (record
+  the category without that mark). "אחר" is not a way to avoid asking - add_transaction refuses
+  "אחר" unless she chose it for that file.
   Every recorded business is remembered automatically for next time.
 - If a tool returns ok=false, read the error: fix the values and try again, or ask her.
 - Never calculate totals or budgets yourself - get_monthly_summary does that.
@@ -77,9 +89,14 @@ RULES
   Older documents are recorded as usual, without a summary.
 - Before each tool call, write one short sentence in Hebrew saying what you are doing and why.
 
-FINAL ANSWER (when you are done, answer without calling a tool), in Hebrew, short:
-what was recorded, what was skipped and why, files to upload again, and any budget whose status
-is near (say "קרוב לתקציב") or over (say "חריגה מהתקציב"). Do not repeat the whole summary table - she already sees it.
+FINAL ANSWER (when you are done, answer without calling a tool), in Hebrew, usually one or two sentences:
+- what was recorded (businesses and categories) - always.
+- ONLY IF a document was skipped: which and why.
+- ONLY IF a file could not be read: which to upload again.
+- ONLY IF a budget is near or over: say "קרוב לתקציב" or "חריגה מהתקציב" with the category.
+Leave out every part that did not happen - never write that nothing was skipped, no file needs uploading
+or no budget is near. Do not describe your process (the questions you asked) and do not repeat the
+summary table - she already sees it.
 Do not count documents or transactions - Python adds the exact numbers under your answer.
 
 Expense categories (what belongs in each):
@@ -147,6 +164,9 @@ TOOL_DEFINITIONS = [
                     "source_file": {"type": "string", "description": "The image file name"},
                     "items": {"type": "array", "items": {"type": "string"}, "description": "Item names (optional)"},
                     "tax_id": {"type": "string", "description": "The business number (tax_id) from read_document, if any"},
+                    "category_evidence": {"type": "string", "description": "For a business that is not known, when she "
+                                          "did not choose the category: a word copied from the business name or an "
+                                          "item that shows the category"},
                 },
                 "required": ["type", "date", "amount", "category", "business", "source_file"],
             },
@@ -220,6 +240,9 @@ class _RunState:
     recorded_months: set[str] = field(default_factory=set)  # "YYYY-MM" of what was recorded
     summarized: set[str] = field(default_factory=set)       # months whose summary was shown
     warned: set[str] = field(default_factory=set)    # files whose reading had warnings
+    # file -> the names read from a document of an unknown business (category evidence must be in them)
+    evidence_text: dict[str, list[str]] = field(default_factory=dict)
+    converted: dict[str, dict] = field(default_factory=dict)  # file -> {"total" in ₪, "original": ...}
     answers: dict[str, list[str]] = field(default_factory=dict)  # file -> her answers about it
     documents: dict[str, str] = field(default_factory=dict)  # file -> "business · date · amount"
 
@@ -254,12 +277,22 @@ def _describe_document(reading: dict) -> str:
     """One line that tells her which document a question is about (she does not know file names)."""
     parts = [reading.get("business") or "ללא שם עסק", reading.get("date") or "ללא תאריך"]
     if reading.get("total") is not None:
-        parts.append(f"{reading['total']:,.2f} {config.CURRENCY}")
+        # Not converted (no rate found): show its own currency, not ₪
+        currency = config.CURRENCY if reading.get("currency") in (None, "ILS") else reading["currency"]
+        parts.append(f"{reading['total']:,.2f} {currency}")
     return " · ".join(parts)
 
 
+def _evidence_found(evidence, names: list[str]) -> bool:
+    """Whether the model's category evidence is really a word from the document's business name or items."""
+    def clean(text):
+        return re.sub(r"[\s\"'׳״`.,()-]", "", str(text or "")).casefold()
+    evidence = clean(evidence)
+    return len(evidence) >= 2 and any(evidence in clean(name) for name in names)
+
+
 def _record_refusal(args: dict, state: _RunState) -> str | None:
-    """Rules checked in Python before recording: the model broke both of them in test runs."""
+    """Rules checked in Python before recording (the model broke the first three in test runs)."""
     file = args.get("source_file")
     if not isinstance(file, str):
         return None
@@ -267,6 +300,22 @@ def _record_refusal(args: dict, state: _RunState) -> str | None:
     if file in state.warned and not answers:
         return (f"בקריאת '{file}' היו אזהרות – יש לשאול את המשתמשת על הקובץ הזה "
                 "(ask_user עם file) לפני הרישום")
+    # The prompt said "ask if not obvious", yet the model was always sure: "שוקי פרר" (no items) became
+    # leisure, a travel agency became studies. Now it must point to a word in the document; asked at
+    # most once per business - after it is recorded, memory knows its category.
+    # Her answers count: a category she chose, or a business name she typed (evidence may come from it)
+    chose_category = any(str(args.get("category")) in a for a in answers)
+    if file in state.evidence_text and not chose_category             and not _evidence_found(args.get("category_evidence"), state.evidence_text[file] + answers):
+        return (f"אין במסמך ראיה לקטגוריה '{args.get('category')}' (category_evidence חייב להיות מילה מתוך שם העסק "
+                "או מפריט) – יש לשאול את המשתמשת (ask_user עם file ו-2-4 קטגוריות, הניחוש שלך ראשון עם ' (מומלץ)')")
+    # A document in dollars: the ₪ amount from read_document must be recorded, not the printed one
+    converted = state.converted.get(file)
+    amount = args.get("amount")
+    if converted and isinstance(amount, (int, float)) and converted["original"]["total"] is not None \
+            and abs(abs(amount) - abs(converted["original"]["total"])) <= config.AMOUNT_TOLERANCE:
+        original = converted["original"]
+        return (f"הסכום {amount} הוא ב-{original['currency']}. יש לרשום בשקלים: {converted['total']} "
+                f"(לפי שער {original['rate']})")
     if args.get("category") == "אחר" and not any("אחר" in a for a in answers):
         return ("'אחר' רק אם המשתמשת בחרה בו – יש לשאול אותה על הקטגוריה (ask_user עם file "
                 "ו-2-4 קטגוריות אפשריות)")
@@ -299,6 +348,10 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
 
     if name == "add_transaction" and (refusal := _record_refusal(args, state)):
         return {"ok": False, "error": refusal}
+    if name == "add_transaction":
+        args = {k: v for k, v in args.items() if k != "category_evidence"}  # checked above, not saved
+    if name == "add_transaction" and (converted := state.converted.get(args.get("source_file"))):
+        args = {**args, "original": converted["original"]}  # kept in the transaction, not the model's job
 
     function = _TOOL_FUNCTIONS.get(name)
     if function is None:
@@ -311,6 +364,11 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
         state.documents[result["file"]] = _describe_document(result)
         if result.get("warnings"):
             state.warned.add(result["file"])
+        if result.get("document_type") in ("receipt", "refund") and not result.get("known_business"):
+            names = [result.get("business"), result.get("business_printed")] + [i["name"] for i in result.get("items", [])]
+            state.evidence_text[result["file"]] = [n for n in names if n]
+        if result.get("original"):
+            state.converted[result["file"]] = {"total": result["total"], "original": result["original"]}
     return result
 
 
@@ -365,7 +423,9 @@ def _show_missing_summaries(ui: AgentUI, state: _RunState) -> None:
 
 def _run_facts(state: _RunState) -> str:
     """The exact numbers of this run - from Python, not the model (a test run said 8 when 11 were recorded)."""
-    text = f"נרשמו בריצה הזו: {state.recorded} · דולגו: {state.skipped}"
+    text = f"נרשמו בריצה הזו: {state.recorded}"
+    if state.skipped:
+        text += f" · דולגו: {state.skipped}"
     if older := sorted(state.recorded_months - set(_recent_months())):
         text += "\nנרשמו גם מסמכים מחודשים קודמים (בלי טבלת סיכום): " + ", ".join(older)
     # A safety net: in run 2 the model forgot documents she had approved
