@@ -1,4 +1,7 @@
-"""Measure read_document on a fixed set of images with known answers: python evals/run_eval.py
+"""Measure read_document on a fixed set of images with known answers.
+
+    python evals/run_eval.py               -> expected.json (the images used while tuning)
+    python evals/run_eval.py holdout.json  -> images NOT used while tuning (does it generalize?)
 
 Each field of each document gets one of:
   right    - read correctly
@@ -57,7 +60,8 @@ def _score(field: str, reading: dict, expected) -> str:
 
 
 def main() -> None:
-    expected = json.loads((EVALS_DIR / "expected.json").read_text(encoding="utf-8"))["documents"]
+    answers_file = sys.argv[1] if len(sys.argv) > 1 else "expected.json"
+    expected = json.loads((EVALS_DIR / answers_file).read_text(encoding="utf-8"))["documents"]
     config.INBOX_DIR = EVALS_DIR / "images"
     config.USE_READ_CACHE = False  # measure a fresh reading every time
     totals = {field: Counter() for field in FIELDS}

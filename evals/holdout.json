@@ -1,0 +1,55 @@
+{
+  "_about": "A second set: images NOT used while tuning the prompt, to check the fixes generalize. Same format as expected.json.",
+  "documents": {
+    "20261025_152457.jpeg": {
+      "document_type": "receipt", "date": "2026-10-11", "total": 659.0,
+      "business": ["ZARA"], "tax_id": ["540212594"],
+      "tests": "paid with two cards (169.30 + 489.70)"
+    },
+    "09988012318596-20261008161000 (1).png": {
+      "document_type": "receipt", "date": "2026-10-08", "total": 419.93,
+      "business": ["Terminal X"], "tax_id": ["515722536"],
+      "tests": "digital receipt, gift card 400 + credit card 19.93"
+    },
+    "צילום מסך 2026-10-26 002807.png": {
+      "document_type": "receipt", "date": "2026-02-05", "total": 134.0,
+      "business": ["דגים ויקטוריה"], "tax_id": ["321787673", null],
+      "tests": "tiny low-resolution screenshot"
+    },
+    "צילום מסך 2026-10-26 003301.png": {
+      "document_type": "receipt", "date": "2013-06-01", "total": 268.92,
+      "business": ["פז"], "tax_id": ["511640716"],
+      "tests": "fuel receipt from 2013 - old but read correctly, must not be questioned"
+    },
+    "_________WhatsApp__2024_12_30______10_38_36_050dca19.jpg": {
+      "document_type": "bill", "date": "2025-01-02", "total": 120.21,
+      "business": ["הגיחון", "גיחון"], "tax_id": ["512291295", null],
+      "tests": "water bill page 2 via WhatsApp, black redactions, issue date vs period"
+    },
+    "צילום מסך 2026-10-26 005346.png": {
+      "document_type": "bill", "date": "2022-10-19", "total": 3321.40,
+      "business": ["חברת החשמל"], "tax_id": ["520000472"],
+      "tests": "correction bill (תיקון חשבון), 128-day period"
+    },
+    "צילום מסך 2026-10-26 005429.png": {
+      "document_type": "bill", "date": "2024-05-20", "total": null,
+      "business": ["הגיחון", "גיחון"], "tax_id": ["512291295", null],
+      "tests": "water bill page 1 of 2 - the amount is not on this page"
+    },
+    "DFHazmDigi350150_410_1216.png": {
+      "document_type": "other", "date": "2026-10-04", "total": 1636.0,
+      "business": ["גרפצ'יק", "גרפציק"], "tax_id": ["513868620"],
+      "tests": "a digital ORDER (הזמנה דיגיטלית), not a receipt"
+    },
+    "InvoiceReceipt-2026-10-23-12-00.png": {
+      "document_type": "receipt", "date": "2026-10-23", "total": 625.0,
+      "business": ["מיכל עטר"], "tax_id": ["023847320"],
+      "tests": "a private person's receipt, 8-digit ID number"
+    },
+    "צילום מסך 2026-10-25 162359.png": {
+      "document_type": "receipt", "date": "2026-07-15", "total": 67.0,
+      "business": ["ספרי חיים"], "tax_id": ["314033812"],
+      "tests": "online book order paid with PayPal"
+    }
+  }
+}

@@ -298,12 +298,15 @@ def _parse_printed_date(printed: str | None) -> str | None:
 _MISSING_BUSINESS = "לא נמצא שם עסק – לשאול את המשתמשת (לא לרשום שם כמו 'לא ידוע')"
 
 
-def _likely_misread_year(date: str) -> str | None:
+def _likely_misread_year(date: str, printed: str) -> str | None:
     """The same day and month in the current year, if that is recent - the year was probably misread.
 
-    In tests a photo of 22/10/26 was read as 22/10/24. An old date that does not fit this
-    pattern (e.g. 17/12/25, read correctly) is not questioned.
+    In tests a photo of 22/10/26 was read as 22/10/24. Only a two-digit year is suspected: a
+    four-digit year is printed clearly (a 2022 bill dated 19/10/2022 was wrongly questioned).
+    An old date that does not fit this pattern (e.g. 17/12/25, read correctly) is not questioned.
     """
+    if re.search(r"\d{4}", printed):
+        return None
     today = calendar_date.today()
     read = calendar_date.fromisoformat(date)
     if read.year == today.year:
@@ -344,7 +347,7 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
         warnings.append(f"לא הצלחתי להבין את התאריך '{reading['date_printed']}' – לשאול את המשתמשת")
     elif problem := _check_date(reading["date"]):
         warnings.append(f"{problem} (מודפס: {reading['date_printed']})")
-    elif likely := _likely_misread_year(reading["date"]):
+    elif likely := _likely_misread_year(reading["date"], reading["date_printed"]):
         warnings.append(
             f"ייתכן שהשנה נקראה לא נכון: נקרא {reading['date']}, אולי {likely} (מודפס: {reading['date_printed']}) – "
             "לוודא עם המשתמשת"
