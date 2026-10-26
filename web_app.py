@@ -68,8 +68,8 @@ def dashboard(month: str | None = None) -> dict:
         raise HTTPException(400, summary["error"])
 
     transactions = storage.load_transactions()
-    months = {t["date"][:7] for t in transactions if isinstance(t.get("date"), str)}
-    months.add(calendar_date.today().strftime("%Y-%m"))
+    data_months = {t["date"][:7] for t in transactions if isinstance(t.get("date"), str)}
+    months = data_months | {calendar_date.today().strftime("%Y-%m")}
     in_month = [dict(t, has_image=(config.INBOX_DIR / t.get("source_file", "")).is_file())
                 for t in transactions if str(t.get("date", "")).startswith(month + "-")]
     in_month.sort(key=lambda t: (t["date"], t.get("id", "")), reverse=True)
@@ -83,6 +83,7 @@ def dashboard(month: str | None = None) -> dict:
         "summary": summary,
         "transactions": in_month,
         "months": sorted(months, reverse=True),
+        "latest_month": max(data_months, default=None),  # the page opens here if this month is empty
         "trend": trend,
         "categories": config.EXPENSE_CATEGORIES,
         "income_categories": config.INCOME_CATEGORIES,

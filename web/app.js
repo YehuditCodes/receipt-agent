@@ -21,6 +21,7 @@ const state = {
   file: null,
   running: false,
   newIds: new Set(),   // transactions recorded in this run - highlighted in the table
+  firstLoad: true,     // an empty current month on opening -> show the latest month with data instead
   charts: {},
 };
 
@@ -33,10 +34,15 @@ const shortMonth = (m) => new Intl.DateTimeFormat("he-IL", { month: "short" })
 const formatDate = (d) => d.split("-").reverse().join(".");
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
+// A Latin file name inside a Hebrew line came out scrambled ("jpeg.003721_20261026"): wrap it in
+// Unicode isolate marks (LRI ... PDI) so it is laid out left-to-right as one unit.
+const FILE_NAME = /[\w\-]+(?:[ .()\-][\w\-()]+)*\.(?:jpe?g|png|webp)\b/gi;
+const isolateFileNames = (text) => String(text).replace(FILE_NAME, "\u2066$&\u2069");
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
+  if (text !== undefined) node.textContent = isolateFileNames(text);
   return node;
 }
 
@@ -52,6 +58,12 @@ async function loadDashboard() {
     const response = await fetch(`/api/dashboard?month=${state.month}`);
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || body.detail || "שגיאה בטעינת הנתונים");
+    if (state.firstLoad && !body.transactions.length && body.latest_month && body.latest_month !== state.month) {
+      state.firstLoad = false;
+      state.month = body.latest_month;
+      return loadDashboard();
+    }
+    state.firstLoad = false;
     state.data = body;
     await document.fonts.ready;  // charts measure their labels: with a fallback font they were cut off
     showPageError("");

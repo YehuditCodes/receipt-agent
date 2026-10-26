@@ -330,6 +330,10 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
         return {"ok": False, "error": f"הפרמטרים של {name} אינם JSON תקין"}
     if not isinstance(args, dict):
         return {"ok": False, "error": f"הפרמטרים של {name} חייבים להיות אובייקט"}
+    # A run showed an empty summary of a month with nothing recorded - refused before she sees it
+    if name == "get_monthly_summary" and args.get("month") not in _wanted_summaries(state):
+        return {"ok": False, "error": "אין צורך בסיכום של החודש הזה – רק החודש הנוכחי וחודשים אחרונים "
+                                      f"שנרשם בהם משהו בריצה הזו: {', '.join(sorted(_wanted_summaries(state)))}"}
     ui.tool_call(name, args)
 
     if name == "ask_user":
@@ -411,11 +415,15 @@ def _progress_report(recorded: int) -> str:
     return text
 
 
+def _wanted_summaries(state: _RunState) -> set[str]:
+    """The current month, and the recent months in which something was recorded in this run."""
+    recent = _recent_months()
+    return {recent[0]} | (state.recorded_months & set(recent))
+
+
 def _show_missing_summaries(ui: AgentUI, state: _RunState) -> None:
     """Show the summaries the model should have asked for (a test run showed only 1 of the months)."""
-    recent = _recent_months()
-    wanted = {recent[0]} | (state.recorded_months & set(recent))
-    for month in sorted(wanted - state.summarized):
+    for month in sorted(_wanted_summaries(state) - state.summarized):
         summary = tools.get_monthly_summary(month)
         if summary.get("ok"):
             ui.show_summary(summary)

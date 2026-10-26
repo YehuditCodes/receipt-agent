@@ -13,7 +13,8 @@ def money(amount: float) -> str:
 def describe_result(name: str, result: dict) -> str:
     """What a successful tool result means, in one line (errors are shown by each UI)."""
     if name == "list_documents":
-        text = f"נמצאו {len(result['documents'])} מסמכים, מתוכם {result['new_count']} חדשים"
+        new = "מסמך חדש אחד" if result["new_count"] == 1 else f"{result['new_count']} חדשים"
+        text = f"נמצאו {len(result['documents'])} מסמכים, מתוכם {new}"
         if result.get("unsupported_files"):
             text += f" (לא נתמכים: {', '.join(result['unsupported_files'])})"
         return text
