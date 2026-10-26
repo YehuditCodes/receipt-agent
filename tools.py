@@ -172,6 +172,8 @@ currency: ISO code; ₪ / ש"ח / NIS = "ILS".
 
 items: each purchased line with its price, for receipts and refunds only (empty for bills and payslips).
 Copy the names as printed; leave out a line rather than invent it. price is null if it cannot be read.
+If there are no item lines, use the line that says what was paid for (עבור / פרטים / תיאור, often
+handwritten) as one item - it tells what the money was for.
 
 notes: anything unusual worth knowing, in Hebrew, or null."""
 

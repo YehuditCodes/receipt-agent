@@ -28,7 +28,7 @@
     },
     "20261026_003721.jpeg": {
       "document_type": "receipt", "date": "2026-09-06", "total": 200.0,
-      "business": ["הבירה", "טרוקדרו"], "tax_id": ["513012401"],
+      "business": ["הבירה"], "tax_id": ["513012401"],
       "tests": "handwritten; trade name (driving school) vs legal name (food services)"
     },
     "20261025_152517.jpeg": {

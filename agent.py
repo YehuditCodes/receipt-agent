@@ -55,8 +55,11 @@ RULES
 - Known business: if read_document returns "known_business", this business was recorded before
   (matched by its business number, or by its name) - record it with that business name and category,
   without asking. Pass the document's tax_id to add_transaction.
-- Category: a known business (list below) gets its category without asking. Otherwise choose
-  from the business name and the items only if it is obvious (a donation receipt -> "תרומות").
+- Category: a known business (list below) gets its category without asking. Otherwise choose by
+  WHAT WAS PAID FOR (the items / "עבור" line), not by words in a legal company name - e.g. "א.ג.
+  נכסים והשקעות בע"מ" with the item "שיעור פסנתר" is a lesson, not housing. Choose without asking
+  only if it is obvious (a donation receipt -> "תרומות"); if the name and the items point to
+  different categories, ask.
   If not obvious, ask her with ask_user and offer 2-4 likely categories as options. "אחר" is not a
   way to avoid asking - add_transaction refuses "אחר" unless she chose it for that file.
   Every recorded business is remembered automatically for next time.
