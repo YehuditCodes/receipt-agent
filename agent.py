@@ -71,14 +71,15 @@ RULES
   Every recorded business is remembered automatically for next time.
 - If a tool returns ok=false, read the error: fix the values and try again, or ask her.
 - Never calculate totals or budgets yourself - get_monthly_summary does that.
-- When all documents are handled, call get_monthly_summary once for EACH month (YYYY-MM of the date)
-  in which you recorded a transaction during this run - e.g. records dated 2026-09-10 and 2010-03-13
-  need two calls. If nothing new was recorded, call it for the current month: {this_month}.
+- When all documents are handled, call get_monthly_summary for the current month ({this_month}) and
+  for each of these recent months in which you recorded a transaction during this run: {recent_months}.
+  Older documents are recorded as usual, without a summary.
 - Before each tool call, write one short sentence in Hebrew saying what you are doing and why.
 
 FINAL ANSWER (when you are done, answer without calling a tool), in Hebrew, short:
 what was recorded, what was skipped and why, files to upload again, and any budget whose status
 is near (say "קרוב לתקציב") or over (say "חריגה מהתקציב"). Do not repeat the whole summary table - she already sees it.
+Do not count documents or transactions - Python adds the exact numbers under your answer.
 
 Expense categories (what belongs in each):
 {expense_categories}
@@ -213,9 +214,22 @@ _TOOL_FUNCTIONS = {
 class _RunState:
     """What Python remembers during one run, to enforce rules the prompt alone did not keep."""
     recorded: int = 0
+    skipped: int = 0
+    recorded_months: set[str] = field(default_factory=set)  # "YYYY-MM" of what was recorded
+    summarized: set[str] = field(default_factory=set)       # months whose summary was shown
     warned: set[str] = field(default_factory=set)    # files whose reading had warnings
     answers: dict[str, list[str]] = field(default_factory=dict)  # file -> her answers about it
     documents: dict[str, str] = field(default_factory=dict)  # file -> "business · date · amount"
+
+
+def _recent_months() -> list[str]:
+    """The current month and the ones before it ("YYYY-MM"), config.SUMMARY_RECENT_MONTHS in all."""
+    today = calendar_date.today()
+    months = []
+    for back in range(config.SUMMARY_RECENT_MONTHS):
+        year, month = divmod(today.year * 12 + today.month - 1 - back, 12)
+        months.append(f"{year}-{month + 1:02d}")
+    return months
 
 
 def _system_prompt() -> str:
@@ -225,6 +239,7 @@ def _system_prompt() -> str:
     return SYSTEM_PROMPT.format(
         today=today.isoformat(),
         this_month=today.strftime("%Y-%m"),
+        recent_months=", ".join(_recent_months()),
         expense_categories="\n".join(f"- {c}: {config.CATEGORY_DESCRIPTIONS.get(c, '')}" for c in config.EXPENSE_CATEGORIES),
         income_categories=", ".join(config.INCOME_CATEGORIES),
         currency=config.CURRENCY,
@@ -336,6 +351,27 @@ def _progress_report(recorded: int) -> str:
     return text
 
 
+def _show_missing_summaries(ui: AgentUI, state: _RunState) -> None:
+    """Show the summaries the model should have asked for (a test run showed only 1 of the months)."""
+    recent = _recent_months()
+    wanted = {recent[0]} | (state.recorded_months & set(recent))
+    for month in sorted(wanted - state.summarized):
+        summary = tools.get_monthly_summary(month)
+        if summary.get("ok"):
+            ui.show_summary(summary)
+
+
+def _run_facts(state: _RunState) -> str:
+    """The exact numbers of this run - from Python, not the model (a test run said 8 when 11 were recorded)."""
+    text = f"נרשמו בריצה הזו: {state.recorded} · דולגו: {state.skipped}"
+    if older := sorted(state.recorded_months - set(_recent_months())):
+        text += "\nנרשמו גם מסמכים מחודשים קודמים (בלי טבלת סיכום): " + ", ".join(older)
+    # A safety net: in run 2 the model forgot documents she had approved
+    if left := _not_handled():
+        text += "\nקבצים שלא נרשמו ולא דולגו (לבדוק): " + ", ".join(left)
+    return text
+
+
 def run(ui: AgentUI) -> None:
     """Run the agent until it reaches its goal or the step limit.
 
@@ -361,11 +397,8 @@ def _loop(ui: AgentUI, state: _RunState) -> None:
         messages.append(message.model_dump(exclude_none=True))
 
         if not message.tool_calls:  # no tool chosen: the model says it is done
-            text = message.content or "סיימתי."
-            # A safety net: in run 2 the model forgot documents she had approved
-            if left := _not_handled():
-                text += "\n\nקבצים שלא נרשמו ולא דולגו (לבדוק): " + ", ".join(left)
-            ui.final(text)
+            _show_missing_summaries(ui, state)
+            ui.final((message.content or "סיימתי.") + "\n\n" + _run_facts(state))
             return
 
         ui.thinking(message.content or "")
@@ -375,8 +408,12 @@ def _loop(ui: AgentUI, state: _RunState) -> None:
             ui.tool_result(name, result)
             if result.get("ok") and name == "get_monthly_summary":
                 ui.show_summary(result)
+                state.summarized.add(result["month"])
             if result.get("ok") and name == "add_transaction":
                 state.recorded += 1
+                state.recorded_months.add(result["transaction"]["date"][:7])
+            if result.get("ok") and name == "skip_document":
+                state.skipped += 1
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.id,

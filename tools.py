@@ -457,6 +457,9 @@ def add_transaction(type: str, date: str, amount: float, category: str, business
         return _error("חסר שם העסק / המעסיק")
     if not isinstance(source_file, str) or not source_file.strip():
         return _error("חסר שם קובץ המקור")
+    # In a test run the model mistyped a file name; the record then looked like a new file next run
+    if (config.INBOX_DIR / source_file.strip()).name != source_file.strip() or not (config.INBOX_DIR / source_file.strip()).is_file():
+        return _error(f"הקובץ '{source_file}' לא נמצא בתיקיית inbox – יש להעתיק את השם בדיוק מ-list_documents")
     if items is None:
         items = []
     if not isinstance(items, list) or not all(isinstance(i, str) for i in items):
