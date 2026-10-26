@@ -51,8 +51,9 @@ RULES
   document and mention it in the final report.
 - If read_document returns an error (e.g. a blurry image), do not record anything for that file;
   tell her in the final report which files to upload again.
-- If the business name is missing, ask her for it. Never record a placeholder such as "לא ידוע"
-  and never guess the name from a slogan or logo.
+- If the business name, the date or the amount is missing, ask her for that value directly (no
+  options except "לא לרשום"). Never invent a value: no placeholder such as "לא ידוע", no name guessed
+  from a slogan or logo, and never today's date for a document without a date.
 - Type: receipt and bill -> expense; a bill's category is "חשבונות בית". payslip -> income, category
   "משכורת". refund -> expense with a
   NEGATIVE amount, in the category of what was returned. "other" (not a proof of payment) ->
@@ -215,6 +216,7 @@ class _RunState:
     """What Python remembers during one run, to enforce rules the prompt alone did not keep."""
     recorded: int = 0
     skipped: int = 0
+    sent_back: bool = False  # the model said "done" too early once and was sent back
     recorded_months: set[str] = field(default_factory=set)  # "YYYY-MM" of what was recorded
     summarized: set[str] = field(default_factory=set)       # months whose summary was shown
     warned: set[str] = field(default_factory=set)    # files whose reading had warnings
@@ -397,6 +399,16 @@ def _loop(ui: AgentUI, state: _RunState) -> None:
         messages.append(message.model_dump(exclude_none=True))
 
         if not message.tool_calls:  # no tool chosen: the model says it is done
+            # Stop condition checked by Python: in a test run the model "finished" after 2 of 15
+            # documents. Sent back once - some files rightly stay open (unreadable, no answer).
+            left = _not_handled()
+            if left and not state.sent_back:
+                state.sent_back = True
+                messages.append({"role": "user", "content": (
+                    f"עוד לא סיימת: {len(left)} קבצים לא נרשמו ולא דולגו: {', '.join(left)}. "
+                    "המשך לטפל בהם. אם אי אפשר לטפל באחד מהם עכשיו (תמונה לא קריאה, לא התקבלה תשובה) – "
+                    "כתוב זאת בהודעת הסיום.")})
+                continue
             _show_missing_summaries(ui, state)
             ui.final((message.content or "סיימתי.") + "\n\n" + _run_facts(state))
             return
