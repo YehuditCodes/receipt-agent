@@ -488,8 +488,9 @@ def find_duplicate(date: str, amount: float, source_file: str | None = None, tax
     """Return already-recorded transactions that may be the same document.
 
     Candidates are matched by date + amount (business names read from images vary,
-    e.g. "שופרסל" / "שופרסל דיל"), by the same business number + amount (the date may
-    have been read differently, e.g. 22/10/24 vs 22/10/26), or by the same file name.
+    e.g. "שופרסל" / "שופרסל דיל"), by the same file name, or by the same business number +
+    amount + day and month in another year (a misread year: 22/10/24 vs 22/10/26). Only the
+    year may differ: a monthly payment of the same amount (rent, a donation) is not a duplicate.
     The agent compares and decides whether it really is a duplicate.
     """
     if problem := _check_date(date):
@@ -505,8 +506,8 @@ def find_duplicate(date: str, amount: float, source_file: str | None = None, tax
             matched_by = "same_file"
         elif same_amount and t.get("date") == date:
             matched_by = "date_and_amount"
-        elif same_amount and tax_id and t.get("tax_id") == tax_id:
-            matched_by = "business_number_and_amount"
+        elif same_amount and tax_id and t.get("tax_id") == tax_id and str(t.get("date", ""))[5:] == date[5:]:
+            matched_by = "business_number_amount_and_day"
         else:
             continue
         candidates.append({
