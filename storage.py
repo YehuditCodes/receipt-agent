@@ -104,6 +104,16 @@ def save_memory(memory: dict) -> None:
     _write_json(config.MEMORY_FILE, memory)
 
 
+# --- Skipped files: file name -> {"reason": ..., "skipped_at": ...} ---
+
+def load_skipped() -> dict:
+    return _read_json(config.SKIPPED_FILE, default={}, expected_type=dict)
+
+
+def save_skipped(skipped: dict) -> None:
+    _write_json(config.SKIPPED_FILE, skipped)
+
+
 # --- Read cache: fingerprint of (image, prompt, model) -> the model's raw reading ---
 
 def load_read_cache() -> dict:

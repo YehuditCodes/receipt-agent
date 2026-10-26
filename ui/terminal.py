@@ -210,6 +210,8 @@ class TerminalUI(AgentUI):
                 return "לא נמצאה כפילות"
             found = ", ".join(f"{c.get('id')} {c.get('business', '')}" for c in result["candidates"])
             return f"נמצאו תנועות דומות: {found}"
+        if name == "skip_document":
+            return f"דולג: {result['reason']}"
         if name == "get_monthly_summary":
             return f"סיכום חודש {result['month']}: {result['transaction_count']} תנועות"
         return name

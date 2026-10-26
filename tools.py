@@ -89,24 +89,28 @@ def _known_business(tax_id: str | None, business: str | None) -> dict | None:
 # --- Tools ---
 
 def list_documents() -> dict:
-    """Images in inbox/, each marked whether it was already recorded (by file name)."""
+    """Images in inbox/, each marked whether it was already recorded or skipped on purpose (by file name)."""
     if not config.INBOX_DIR.is_dir():
         return _error(f"תיקיית הקלט {config.INBOX_DIR} לא קיימת")
 
     recorded = {t.get("source_file") for t in storage.load_transactions()}
+    skipped = storage.load_skipped()
     documents, unsupported = [], []
     for path in sorted(config.INBOX_DIR.iterdir()):
         if not path.is_file() or path.name.startswith("."):  # skip folders and .gitkeep
             continue
         if path.suffix.lower() in config.SUPPORTED_IMAGE_EXTENSIONS:
-            documents.append({"file": path.name, "already_recorded": path.name in recorded})
+            document = {"file": path.name, "already_recorded": path.name in recorded}
+            if path.name in skipped:
+                document["skipped"] = skipped[path.name]["reason"]
+            documents.append(document)
         else:
             unsupported.append(path.name)
 
     result = {
         "ok": True,
         "documents": documents,
-        "new_count": sum(not d["already_recorded"] for d in documents),
+        "new_count": sum(not d["already_recorded"] and "skipped" not in d for d in documents),
         "unsupported_files": unsupported,
     }
     if not documents:
@@ -456,6 +460,12 @@ def add_transaction(type: str, date: str, amount: float, category: str, business
         return _error("items חייב להיות רשימה של מחרוזות")
 
     transactions = storage.load_transactions()
+    # The same file is never recorded twice (a test run recorded a file it had skipped as a duplicate)
+    source_file = source_file.strip()
+    if recorded := next((t for t in transactions if t.get("source_file") == source_file), None):
+        return _error(f"הקובץ '{source_file}' כבר נרשם ({recorded.get('id')}) – אין לרשום אותו שוב")
+    if skipped := storage.load_skipped().get(source_file):
+        return _error(f"הקובץ '{source_file}' סומן כדולג ({skipped['reason']}) – אין לרשום אותו")
     transaction = {
         "id": storage.next_transaction_id(transactions),
         "type": type,
@@ -474,32 +484,56 @@ def add_transaction(type: str, date: str, amount: float, category: str, business
     return {"ok": True, "transaction": transaction, "learned_business": learned}
 
 
-def find_duplicate(date: str, amount: float, source_file: str | None = None) -> dict:
+def find_duplicate(date: str, amount: float, source_file: str | None = None, tax_id: str | None = None) -> dict:
     """Return already-recorded transactions that may be the same document.
 
     Candidates are matched by date + amount (business names read from images vary,
-    e.g. "שופרסל" / "שופרסל דיל"), or by the same file name. The agent compares
-    the businesses and decides whether it really is a duplicate.
+    e.g. "שופרסל" / "שופרסל דיל"), by the same business number + amount (the date may
+    have been read differently, e.g. 22/10/24 vs 22/10/26), or by the same file name.
+    The agent compares and decides whether it really is a duplicate.
     """
     if problem := _check_date(date):
         return _error(problem)
     if problem := _check_amount(amount):
         return _error(problem)
 
+    tax_id = _valid_tax_id(tax_id)
     candidates = []
     for t in storage.load_transactions():
-        same_doc = t.get("date") == date and t.get("amount") == _round_money(amount)
-        same_file = source_file is not None and t.get("source_file") == source_file
-        if same_doc or same_file:
-            candidates.append({
-                "id": t.get("id"),
-                "date": t.get("date"),
-                "amount": t.get("amount"),
-                "business": t.get("business"),
-                "source_file": t.get("source_file"),
-                "matched_by": "same_file" if same_file else "date_and_amount",
-            })
+        same_amount = t.get("amount") == _round_money(amount)
+        if source_file is not None and t.get("source_file") == source_file:
+            matched_by = "same_file"
+        elif same_amount and t.get("date") == date:
+            matched_by = "date_and_amount"
+        elif same_amount and tax_id and t.get("tax_id") == tax_id:
+            matched_by = "business_number_and_amount"
+        else:
+            continue
+        candidates.append({
+            "id": t.get("id"),
+            "date": t.get("date"),
+            "amount": t.get("amount"),
+            "business": t.get("business"),
+            "source_file": t.get("source_file"),
+            "matched_by": matched_by,
+        })
     return {"ok": True, "candidates": candidates, "possible_duplicate": bool(candidates)}
+
+
+def skip_document(file: str, reason: str) -> dict:
+    """Mark a file as handled without recording it (a duplicate, or she said not to record it).
+
+    The next run's list_documents marks it as skipped, so it is not handled again.
+    Not for unreadable images - those should come back as a new photo.
+    """
+    if not isinstance(file, str) or (config.INBOX_DIR / file).name != file or not (config.INBOX_DIR / file).is_file():
+        return _error(f"הקובץ '{file}' לא נמצא בתיקיית inbox")
+    if not isinstance(reason, str) or not reason.strip():
+        return _error("חסרה סיבה לדילוג")
+    skipped = storage.load_skipped()
+    skipped[file] = {"reason": reason.strip(), "skipped_at": datetime.now().isoformat(timespec="seconds")}
+    storage.save_skipped(skipped)
+    return {"ok": True, "file": file, "reason": reason.strip()}
 
 
 def remember_business(business: str, category: str, tax_id: str | None = None) -> dict:

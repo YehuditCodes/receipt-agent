@@ -25,15 +25,19 @@ GOAL: process every new document (receipt, bill, payslip, refund) in her inbox, 
 correctly exactly once, then show her the monthly summary and report what happened.
 
 WORK ONE DOCUMENT AT A TIME: finish a document - read it, check for a duplicate, ask her if
-needed, then record it or decide to skip it - before you read the next one. Within a document
-you decide which steps are needed. (Reading everything first made you forget documents she had
-approved, and she could not tell which document a late question was about.)
+needed, then record it (add_transaction) or skip it (skip_document) - before you read the next
+one. Within a document you decide which steps are needed. (Reading everything first made you
+forget documents she had approved, and she could not tell which document a late question was about.)
 
 RULES
-- Documents marked already_recorded are done - do not read them again.
-- Before recording a document, check that it is not already recorded (find_duplicate). The
-  candidates may be the same document with a slightly different business name ("שופרסל" /
-  "שופרסל דיל", "מיכל עטר" / "מיכל עזר") - compare and decide. If you are not sure, ask her.
+- Documents marked already_recorded or skipped are done - do not read them again.
+- Before recording a document, check that it is not already recorded (find_duplicate, with the
+  document's tax_id). The candidates may be the same document with a slightly different business
+  name ("שופרסל" / "שופרסל דיל", "מיכל עטר" / "מיכל עזר") or date - compare and decide. If you are
+  not sure, ask her.
+- skip_document: call it when you decide for good not to record a document - a duplicate, or she
+  said not to record it - with a short reason in Hebrew. Not for an unreadable image (she should
+  upload it again) and not when she gave no answer (ask again next time).
 - read_document "warnings" mean the reading may be wrong: do not record blindly. Ask her, say
   what looks wrong, and record only what she confirms (or skip if she says so). add_transaction
   refuses a file with warnings until she has answered a question about that file.
@@ -49,7 +53,8 @@ RULES
   tell her in the final report which files to upload again.
 - If the business name is missing, ask her for it. Never record a placeholder such as "לא ידוע"
   and never guess the name from a slogan or logo.
-- Type: receipt and bill -> expense. payslip -> income, category "משכורת". refund -> expense with a
+- Type: receipt and bill -> expense; a bill's category is "חשבונות בית". payslip -> income, category
+  "משכורת". refund -> expense with a
   NEGATIVE amount, in the category of what was returned. "other" (not a proof of payment) ->
   ask her whether to record it.
 - Known business: if read_document returns "known_business", this business was recorded before
@@ -57,9 +62,10 @@ RULES
   without asking. Pass the document's tax_id to add_transaction.
 - Category: a known business (list below) gets its category without asking. Otherwise choose by
   WHAT WAS PAID FOR (the items / "עבור" line), not by words in a legal company name - e.g. "א.ג.
-  נכסים והשקעות בע"מ" with the item "שיעור פסנתר" is a lesson, not housing. Choose without asking
-  only if it is obvious (a donation receipt -> "תרומות"); if the name and the items point to
-  different categories, ask.
+  נכסים והשקעות בע"מ" with the item "שיעור פסנתר" is a lesson, not housing. Use the category
+  descriptions below. Choose without asking only if it is obvious (a donation receipt -> "תרומות");
+  if the name and the items point to different categories, or a short name could mean several
+  things and there are no items, ask.
   If not obvious, ask her with ask_user and offer 2-4 likely categories as options. "אחר" is not a
   way to avoid asking - add_transaction refuses "אחר" unless she chose it for that file.
   Every recorded business is remembered automatically for next time.
@@ -74,7 +80,8 @@ FINAL ANSWER (when you are done, answer without calling a tool), in Hebrew, shor
 what was recorded, what was skipped and why, files to upload again, and any budget whose status
 is near (say "קרוב לתקציב") or over (say "חריגה מהתקציב"). Do not repeat the whole summary table - she already sees it.
 
-Expense categories: {expense_categories}
+Expense categories (what belongs in each):
+{expense_categories}
 Income categories: {income_categories}
 Monthly budgets ({currency}): {budgets}
 
@@ -116,6 +123,7 @@ TOOL_DEFINITIONS = [
                     "date": {"type": "string", "description": "YYYY-MM-DD"},
                     "amount": {"type": "number"},
                     "source_file": {"type": "string"},
+                    "tax_id": {"type": "string", "description": "The business number (tax_id) from read_document, if any"},
                 },
                 "required": ["date", "amount", "source_file"],
             },
@@ -139,6 +147,22 @@ TOOL_DEFINITIONS = [
                     "tax_id": {"type": "string", "description": "The business number (tax_id) from read_document, if any"},
                 },
                 "required": ["type", "date", "amount", "category", "business", "source_file"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "skip_document",
+            "description": "Mark a document as handled without recording it (a duplicate, or she said not to record it), "
+                           "so the next run does not handle it again.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string"},
+                    "reason": {"type": "string", "description": "Short reason in Hebrew, e.g. 'כפילות של t003'"},
+                },
+                "required": ["file", "reason"],
             },
         },
     },
@@ -180,6 +204,7 @@ _TOOL_FUNCTIONS = {
     "read_document": tools.read_document,
     "find_duplicate": tools.find_duplicate,
     "add_transaction": tools.add_transaction,
+    "skip_document": tools.skip_document,
     "get_monthly_summary": tools.get_monthly_summary,
 }
 
@@ -200,7 +225,7 @@ def _system_prompt() -> str:
     return SYSTEM_PROMPT.format(
         today=today.isoformat(),
         this_month=today.strftime("%Y-%m"),
-        expense_categories=", ".join(config.EXPENSE_CATEGORIES),
+        expense_categories="\n".join(f"- {c}: {config.CATEGORY_DESCRIPTIONS.get(c, '')}" for c in config.EXPENSE_CATEGORIES),
         income_categories=", ".join(config.INCOME_CATEGORIES),
         currency=config.CURRENCY,
         budgets=", ".join(f"{c}: {a}" for c, a in config.BUDGETS.items()),
@@ -295,18 +320,18 @@ def _api_error_message(error: openai.OpenAIError) -> str:
     return f"שגיאה בפנייה למודל: {error}"
 
 
-def _not_recorded() -> list[str]:
-    """Inbox files with no recorded transaction - computed by Python, not the model."""
+def _not_handled() -> list[str]:
+    """Inbox files neither recorded nor skipped on purpose - computed by Python, not the model."""
     documents = tools.list_documents()
     if not documents.get("ok"):
         return []
-    return [d["file"] for d in documents["documents"] if not d["already_recorded"]]
+    return [d["file"] for d in documents["documents"] if not d["already_recorded"] and "skipped" not in d]
 
 
 def _progress_report(recorded: int) -> str:
     """What was done before a stop."""
     text = f"נרשמו בריצה הזו: {recorded} תנועות (הן שמורות)."
-    if left := _not_recorded():
+    if left := _not_handled():
         text += "\nלא טופלו עדיין: " + ", ".join(left) + "\nאפשר להריץ שוב כדי להמשיך."
     return text
 
@@ -338,8 +363,8 @@ def _loop(ui: AgentUI, state: _RunState) -> None:
         if not message.tool_calls:  # no tool chosen: the model says it is done
             text = message.content or "סיימתי."
             # A safety net: in run 2 the model forgot documents she had approved
-            if left := _not_recorded():
-                text += "\n\nקבצים שלא נרשמו (לבדוק שזה בכוונה): " + ", ".join(left)
+            if left := _not_handled():
+                text += "\n\nקבצים שלא נרשמו ולא דולגו (לבדוק): " + ", ".join(left)
             ui.final(text)
             return
 

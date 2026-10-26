@@ -30,6 +30,8 @@ INBOX_DIR = BASE_DIR / "inbox"
 DATA_DIR = BASE_DIR / "data"
 TRANSACTIONS_FILE = DATA_DIR / "transactions.json"
 MEMORY_FILE = DATA_DIR / "memory.json"
+# Files the agent decided not to record (duplicate, "do not record"), so the next run skips them
+SKIPPED_FILE = DATA_DIR / "skipped.json"
 # The model's reading of each image, so the same image is not paid for twice (see read_document)
 READ_CACHE_FILE = DATA_DIR / "read_cache.json"
 USE_READ_CACHE = True
@@ -71,6 +73,22 @@ INCOME_CATEGORIES = [
     "אחר",
 ]
 
+# What belongs in each expense category - given to the model. With names only, it put an
+# electricity bill under "דיור" and a driving school called "הבירה" under restaurants.
+CATEGORY_DESCRIPTIONS = {
+    "מזון וקניות": "סופרמרקט, מכולת, ירקן, מאפייה, מוצרים לבית",
+    "מסעדות ובתי קפה": "מסעדה, בית קפה, משלוח אוכל, פאב",
+    "חשבונות בית": "חשמל, מים, גז, ארנונה, טלפון, אינטרנט, טלוויזיה - כל חשבון (bill)",
+    "דיור": "שכר דירה, משכנתא, ועד בית, תיקונים בדירה",
+    "תחבורה": "דלק, תחבורה ציבורית, מונית, חניה, טיפול ברכב, טסט לרכב",
+    "בריאות ופארם": "רופא, תרופות, בית מרקחת, קוסמטיקה וטיפוח, רפואה משלימה",
+    "ביגוד והנעלה": "בגדים, נעליים, תיקים",
+    "לימודים": "שכר לימוד, קורסים, שיעורים פרטיים, שיעורי נהיגה, ספרי לימוד",
+    "פנאי ובילויים": "כלי נגינה, ספרים, תחביבים, הופעות, טיולים, מתנות",
+    "תרומות": "קבלה על תרומה, עמותה, צדקה",
+    "אחר": "רק אם המשתמשת בחרה בזה",
+}
+
 # --- Monthly budgets (₪) ---
 # Only for flexible spending; fixed costs (rent, bills) get no budget warning.
 BUDGETS = {
@@ -100,6 +118,9 @@ def check_config() -> None:
     for name, categories in (("EXPENSE_CATEGORIES", EXPENSE_CATEGORIES), ("INCOME_CATEGORIES", INCOME_CATEGORIES)):
         if len(set(categories)) != len(categories):
             problems.append(f"יש קטגוריה כפולה ב-{name}")
+    for category in CATEGORY_DESCRIPTIONS:
+        if category not in EXPENSE_CATEGORIES:
+            problems.append(f"לתיאור '{category}' אין קטגוריית הוצאה כזו")
     for category, amount in BUDGETS.items():
         if category not in EXPENSE_CATEGORIES:
             problems.append(f"לתקציב '{category}' אין קטגוריית הוצאה כזו")
