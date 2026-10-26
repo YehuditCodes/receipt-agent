@@ -28,3 +28,6 @@ candidates/
 
 # Eval images (personal documents) - only the expected answers and the script are in git
 evals/images/
+
+# Working notes (plan, decisions, findings) - kept locally, the README has what graders need
+docs/PLAN.md
