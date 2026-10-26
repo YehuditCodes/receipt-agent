@@ -95,7 +95,8 @@ def next_transaction_id(transactions: list[dict]) -> str:
 
 def load_memory() -> dict:
     memory = _read_json(config.MEMORY_FILE, default={}, expected_type=dict)
-    memory.setdefault("business_categories", {})
+    memory.setdefault("business_categories", {})  # business name -> category
+    memory.setdefault("tax_ids", {})  # business number (ח.פ.) -> {"business": name, "category": ...}
     return memory
 
 

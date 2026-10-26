@@ -57,6 +57,33 @@ def _categories_for(kind: str) -> list[str]:
     return config.EXPENSE_CATEGORIES if kind == "expense" else config.INCOME_CATEGORIES
 
 
+def _valid_tax_id(value) -> str | None:
+    """An Israeli business number (ח.פ. / ע.מ. / ת.ז.) as 9 digits, or None if it is not valid.
+
+    The last digit is a check digit (digits weighted 1,2,1,2..., two-digit products summed,
+    total divisible by 10), so a number with one misread digit fails and is not used.
+    """
+    digits = re.sub(r"\D", "", str(value or ""))
+    if not 8 <= len(digits) <= 9:
+        return None
+    digits = digits.zfill(9)
+    total = 0
+    for i, d in enumerate(digits):
+        product = int(d) * (1 if i % 2 == 0 else 2)
+        total += product - 9 if product > 9 else product
+    return digits if total % 10 == 0 else None
+
+
+def _known_business(tax_id: str | None, business: str | None) -> dict | None:
+    """A business recorded before: first by its number (reliable), then by its name."""
+    memory = storage.load_memory()
+    if tax_id and tax_id in memory["tax_ids"]:
+        return {**memory["tax_ids"][tax_id], "matched_by": "tax_id"}
+    if business and business in memory["business_categories"]:
+        return {"business": business, "category": memory["business_categories"][business], "matched_by": "name"}
+    return None
+
+
 # --- Tools ---
 
 def list_documents() -> dict:
@@ -111,6 +138,11 @@ header at the TOP of the document - prefer the trade name there (e.g. "H&M", "ה
 over the legal company name in small print (e.g. "מאצי ריטייל בע"מ"). Ignore logos and names in the
 background, in a watermark, in an advertisement or at the bottom of the document.
 
+tax_id: the issuer's Israeli business number - ח.פ. / ע.מ. / עוסק מורשה / עמותה רשומה / ע.ר. (usually
+9 digits, may be printed with dashes, e.g. 51-420070-8). For a payslip: the employer's number (ח.פ.,
+or תיק ניכויים if there is no ח.פ.). Not the customer's ID (ת.ז. after לכבוד), not a phone, receipt or
+terminal number. null if not printed or not fully readable.
+
 date_printed: the document's date copied exactly as printed (e.g. "03/03/10"), without the time.
 Do not convert or reorder it.
 - receipt / refund: the purchase date
@@ -152,6 +184,7 @@ READ_SCHEMA = {
         "unreadable_reason": _NULLABLE_STRING,
         "document_type": {"type": "string", "enum": ["receipt", "bill", "payslip", "refund", "other"]},
         "business": _NULLABLE_STRING,
+        "tax_id": _NULLABLE_STRING,
         "date_printed": _NULLABLE_STRING,
         "billing_period_end_printed": _NULLABLE_STRING,
         "total": _NULLABLE_NUMBER,
@@ -177,7 +210,7 @@ READ_SCHEMA = {
         },
         "notes": _NULLABLE_STRING,
     },
-    "required": ["readable", "unreadable_reason", "document_type", "business",
+    "required": ["readable", "unreadable_reason", "document_type", "business", "tax_id",
                  "date_printed", "billing_period_end_printed", "total", "payments", "change", "currency", "items", "notes"],
     "additionalProperties": False,
 }
@@ -235,6 +268,9 @@ def _parse_printed_date(printed: str | None) -> str | None:
         return None
 
 
+_MISSING_BUSINESS = "לא נמצא שם עסק – לשאול את המשתמשת (לא לרשום שם כמו 'לא ידוע')"
+
+
 def _likely_misread_year(date: str) -> str | None:
     """The same day and month in the current year, if that is recent - the year was probably misread.
 
@@ -263,12 +299,16 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
     warnings, info = [], []
     # Names sometimes come back split over lines ("מגה בול\nבול סגולה")
     reading["business"] = " ".join((reading["business"] or "").split()).strip(" :;,.-") or None
+    printed_tax_id = reading["tax_id"]
+    reading["tax_id"] = _valid_tax_id(printed_tax_id)
+    if printed_tax_id and not reading["tax_id"]:
+        info.append(f"מספר העסק '{printed_tax_id}' לא עבר בדיקת ספרת ביקורת – הזיהוי יהיה לפי השם")
     if reading["document_type"] == "other":
         warnings.append("זה לא נראה כמו קבלה, חשבון או תלוש – לא לרשום בלי לשאול את המשתמשת")
     if reading["total"] is None:
         warnings.append("לא נמצא סכום כולל")
     if reading["business"] is None:
-        warnings.append("לא נמצא שם עסק – לשאול את המשתמשת (לא לרשום שם כמו 'לא ידוע')")
+        warnings.append(_MISSING_BUSINESS)
 
     reading["date"] = _parse_printed_date(reading["date_printed"])
     if reading["date_printed"] is None:
@@ -357,14 +397,19 @@ def read_document(file: str) -> dict:
         return _error(f"{reason}. התמונה לא ברורה – יש לבקש מהמשתמשת להעלות אותה שוב")
 
     warnings, info = _check_reading(reading)
-    return {"ok": True, "file": file, **reading, "warnings": warnings, "info": info}
+    known = _known_business(reading["tax_id"], reading["business"])
+    if known and reading["business"] is None:  # the number identified it although the name was not read
+        reading["business"] = known["business"]
+        warnings.remove(_MISSING_BUSINESS)
+    return {"ok": True, "file": file, **reading, "known_business": known, "warnings": warnings, "info": info}
 
 
 def add_transaction(type: str, date: str, amount: float, category: str, business: str,
-                    source_file: str, items: list[str] | None = None) -> dict:
+                    source_file: str, items: list[str] | None = None, tax_id: str | None = None) -> dict:
     """Validate and save one expense or income, and remember the business's category for next time.
 
     A refund is an expense with a negative amount (not income). For a payslip, amount is the net pay.
+    tax_id (the business number) is optional; an invalid one is ignored, not an error.
     Remembering is done here, not left to the model: in run 2 it remembered only 1 of 16 businesses.
     """
     if type not in ("expense", "income"):
@@ -395,15 +440,14 @@ def add_transaction(type: str, date: str, amount: float, category: str, business
         "amount": _round_money(amount),
         "category": category,
         "business": business.strip(),
+        "tax_id": _valid_tax_id(tax_id),
         "source_file": source_file.strip(),
         "items": items,
         "added_at": datetime.now().isoformat(timespec="seconds"),
     }
     transactions.append(transaction)
     storage.save_transactions(transactions)
-    learned = storage.load_memory()["business_categories"].get(transaction["business"]) != category
-    if learned:
-        remember_business(transaction["business"], category)
+    learned = remember_business(transaction["business"], category, transaction["tax_id"]).get("changed", False)
     return {"ok": True, "transaction": transaction, "learned_business": learned}
 
 
@@ -435,17 +479,26 @@ def find_duplicate(date: str, amount: float, source_file: str | None = None) -> 
     return {"ok": True, "candidates": candidates, "possible_duplicate": bool(candidates)}
 
 
-def remember_business(business: str, category: str) -> dict:
-    """Remember which category a business belongs to (called by add_transaction)."""
+def remember_business(business: str, category: str, tax_id: str | None = None) -> dict:
+    """Remember a business's category by name, and by number if it has a valid one (called by add_transaction).
+
+    "changed" says whether the memory learned something new.
+    """
     if not isinstance(business, str) or not business.strip():
         return _error("חסר שם העסק")
     if category not in config.EXPENSE_CATEGORIES + config.INCOME_CATEGORIES:
         return _error(f"הקטגוריה '{category}' לא קיימת")
 
+    business = business.strip()
     memory = storage.load_memory()
-    memory["business_categories"][business.strip()] = category
-    storage.save_memory(memory)
-    return {"ok": True, "business": business.strip(), "category": category}
+    before = json.dumps(memory, sort_keys=True)
+    memory["business_categories"][business] = category
+    if tax_id := _valid_tax_id(tax_id):
+        memory["tax_ids"][tax_id] = {"business": business, "category": category}
+    changed = json.dumps(memory, sort_keys=True) != before
+    if changed:
+        storage.save_memory(memory)
+    return {"ok": True, "business": business, "category": category, "changed": changed}
 
 
 def get_monthly_summary(month: str) -> dict:

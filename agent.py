@@ -52,6 +52,9 @@ RULES
 - Type: receipt and bill -> expense. payslip -> income, category "משכורת". refund -> expense with a
   NEGATIVE amount, in the category of what was returned. "other" (not a proof of payment) ->
   ask her whether to record it.
+- Known business: if read_document returns "known_business", this business was recorded before
+  (matched by its business number, or by its name) - record it with that business name and category,
+  without asking. Pass the document's tax_id to add_transaction.
 - Category: a known business (list below) gets its category without asking. Otherwise choose
   from the business name and the items only if it is obvious (a donation receipt -> "תרומות").
   If not obvious, ask her with ask_user and offer 2-4 likely categories as options. "אחר" is not a
@@ -130,6 +133,7 @@ TOOL_DEFINITIONS = [
                     "business": {"type": "string", "description": "Store, company or employer"},
                     "source_file": {"type": "string", "description": "The image file name"},
                     "items": {"type": "array", "items": {"type": "string"}, "description": "Item names (optional)"},
+                    "tax_id": {"type": "string", "description": "The business number (tax_id) from read_document, if any"},
                 },
                 "required": ["type", "date", "amount", "category", "business", "source_file"],
             },

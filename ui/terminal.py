@@ -193,7 +193,11 @@ class TerminalUI(AgentUI):
             business = result.get("business") or "ללא שם עסק"
             date = result.get("date") or result.get("date_printed") or "ללא תאריך"
             total = _money(result["total"]) if result.get("total") is not None else "ללא סכום"
-            return f"{kind} | {business} | {date} | {total}"
+            text = f"{kind} | {business} | {date} | {total}"
+            if known := result.get("known_business"):
+                by = "לפי ח.פ." if known["matched_by"] == "tax_id" else "לפי השם"
+                text += f" · עסק מוכר ({by}): {known['category']}"
+            return text
         if name == "add_transaction":
             t = result["transaction"]
             text = (f"נרשם {t['id']}: {_TRANSACTION_TYPES.get(t['type'], t['type'])} {_money(t['amount'])}"

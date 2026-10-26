@@ -25,3 +25,6 @@ Thumbs.db
 # Old sample images taken out of inbox/ (same reason)
 old_samples/
 candidates/
+
+# Eval images (personal documents) - only the expected answers and the script are in git
+evals/images/

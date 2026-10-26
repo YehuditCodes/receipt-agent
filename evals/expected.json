@@ -1,0 +1,55 @@
+{
+  "_about": "The correct answers for evals/images, filled in by looking at each image. business: every name that counts as right. null in business means 'missing is also fine' (the image has no clear name).",
+  "documents": {
+    "Kabala_104526.png": {
+      "document_type": "receipt", "date": "2026-09-17", "total": 50.0,
+      "business": ["קרן עולם התורה"], "tax_id": ["580649028"],
+      "tests": "donation receipt (run 2: read as 'other')"
+    },
+    "צילום מסך 2026-10-25 162230.png": {
+      "document_type": "receipt", "date": "2026-09-17", "total": 50.0,
+      "business": ["קרן עולם התורה"], "tax_id": ["580649028"],
+      "tests": "the same donation as a screenshot"
+    },
+    "צילום מסך 2026-10-26 005632.png": {
+      "document_type": "bill", "date": "2025-04-29", "total": 2537.98,
+      "business": ["חברת החשמל"], "tax_id": ["520000472"],
+      "tests": "issue date vs billing period (run 2: no date; later: period end 09/04/2025)"
+    },
+    "צילום מסך 2026-10-26 012000.png": {
+      "document_type": "payslip", "date": "2026-06-30", "total": 25000.0,
+      "business": ["מטה בנימין"], "tax_id": ["945301232", null],
+      "tests": "payslip with only a salary month; no company number, only a deductions file"
+    },
+    "20261025_152326.jpeg": {
+      "document_type": "receipt", "date": "2026-09-10", "total": 1015.34,
+      "business": ["רמי לוי", null], "tax_id": [null],
+      "tests": "top of the receipt cut off - no header, no company number"
+    },
+    "20261026_003721.jpeg": {
+      "document_type": "receipt", "date": "2026-09-06", "total": 200.0,
+      "business": ["הבירה", "טרוקדרו"], "tax_id": ["513012401"],
+      "tests": "handwritten; trade name (driving school) vs legal name (food services)"
+    },
+    "20261025_152517.jpeg": {
+      "document_type": "receipt", "date": "2026-10-22", "total": 211.19,
+      "business": ["שערי רווחה", null], "tax_id": ["520022732"],
+      "tests": "crumpled photo; year read as 24 instead of 26; name read 3 different ways"
+    },
+    "20261026_003734.jpeg": {
+      "document_type": "receipt", "date": "2026-09-18", "total": 160.0,
+      "business": ["H&M"], "tax_id": ["514200708"],
+      "tests": "brand name vs legal name (מאצי ריטייל)"
+    },
+    "20261026_005905.jpeg": {
+      "document_type": "receipt", "date": "2025-12-17", "total": 4126.0,
+      "business": ["חלילית"], "tax_id": ["510484736"],
+      "tests": "old document, read correctly - must not be questioned"
+    },
+    "d222a20b-5391-46b9-9d78-655ec3cf503b.png": {
+      "document_type": "receipt", "date": "2026-09-22", "total": 608.0,
+      "business": ["ניל'ס יארד", "ניילס יארד", "Neal's Yard"], "tax_id": ["512309618"],
+      "tests": "digital receipt (converted from PDF)"
+    }
+  }
+}
