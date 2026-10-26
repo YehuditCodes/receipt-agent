@@ -102,3 +102,13 @@ def load_memory() -> dict:
 
 def save_memory(memory: dict) -> None:
     _write_json(config.MEMORY_FILE, memory)
+
+
+# --- Read cache: fingerprint of (image, prompt, model) -> the model's raw reading ---
+
+def load_read_cache() -> dict:
+    return _read_json(config.READ_CACHE_FILE, default={}, expected_type=dict)
+
+
+def save_read_cache(cache: dict) -> None:
+    _write_json(config.READ_CACHE_FILE, cache)

@@ -30,6 +30,9 @@ INBOX_DIR = BASE_DIR / "inbox"
 DATA_DIR = BASE_DIR / "data"
 TRANSACTIONS_FILE = DATA_DIR / "transactions.json"
 MEMORY_FILE = DATA_DIR / "memory.json"
+# The model's reading of each image, so the same image is not paid for twice (see read_document)
+READ_CACHE_FILE = DATA_DIR / "read_cache.json"
+USE_READ_CACHE = True
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 

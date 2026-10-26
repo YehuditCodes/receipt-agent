@@ -9,7 +9,9 @@ file) is raised, because then the agent must stop.
 """
 
 import base64
+import copy
 import functools
+import hashlib
 import json
 import math
 import re
@@ -251,6 +253,25 @@ def _ask_model_to_read(path) -> dict:
     return json.loads(message.content)
 
 
+def _cached_reading(path) -> dict:
+    """The model's reading of an image, from the cache if this exact image was read before.
+
+    The key is a fingerprint of the file's content (not its name - a copy is the same image)
+    plus the prompt and the model, so changing the prompt never reuses old readings.
+    Only the raw reading is cached; the checks in _check_reading run again every time.
+    """
+    if not config.USE_READ_CACHE:
+        return _ask_model_to_read(path)
+    fingerprint = hashlib.sha256(path.read_bytes())
+    fingerprint.update(f"{config.READ_MODEL}|{config.READ_REASONING_EFFORT}|{READ_PROMPT}|{json.dumps(READ_SCHEMA)}".encode())
+    key = fingerprint.hexdigest()
+    cache = storage.load_read_cache()
+    if key not in cache:
+        cache[key] = _ask_model_to_read(path)
+        storage.save_read_cache(cache)
+    return copy.deepcopy(cache[key])  # _check_reading changes the reading it gets
+
+
 def _parse_printed_date(printed: str | None) -> str | None:
     """Israeli day-first date as printed ("03/03/10", "27.02.19", "10/07/2020") -> "YYYY-MM-DD".
 
@@ -381,7 +402,7 @@ def read_document(file: str) -> dict:
         return _error(f"הקובץ גדול מדי ({size_mb:.1f}MB, מקסימום {config.MAX_IMAGE_MB}MB) – יש להקטין את התמונה")
 
     try:
-        reading = _ask_model_to_read(path)
+        reading = _cached_reading(path)
     except openai.BadRequestError as e:
         # Usually a damaged file or a file that is not really an image
         return _error(f"המודל לא הצליח לפתוח את '{file}' – ייתכן שהקובץ פגום או שאינו תמונה ({e.message})")

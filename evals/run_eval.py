@@ -59,6 +59,7 @@ def _score(field: str, reading: dict, expected) -> str:
 def main() -> None:
     expected = json.loads((EVALS_DIR / "expected.json").read_text(encoding="utf-8"))["documents"]
     config.INBOX_DIR = EVALS_DIR / "images"
+    config.USE_READ_CACHE = False  # measure a fresh reading every time
     totals = {field: Counter() for field in FIELDS}
     questions = 0
 
