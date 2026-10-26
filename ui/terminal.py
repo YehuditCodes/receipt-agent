@@ -17,8 +17,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-import config
 from ui.base import AgentUI
+from ui.describe import describe_result, money as _money
 
 _HEBREW_LETTER = re.compile(r"[֐-׿]")
 # Hebrew or English only: symbols such as "ℹ" count as letters in Unicode
@@ -31,8 +31,6 @@ _PANEL_MARGIN = 4
 # Long tool arguments (e.g. an items list) are cut to this length on screen
 _MAX_ARG_LENGTH = 60
 
-_DOCUMENT_TYPES = {"receipt": "קבלה", "bill": "חשבון", "payslip": "תלוש שכר", "refund": "זיכוי", "other": "לא מסמך כספי"}
-_TRANSACTION_TYPES = {"expense": "הוצאה", "income": "הכנסה"}
 _BUDGET_STATUS = {"ok": ("תקין", "green"), "near": ("קרוב לתקציב", "yellow"), "over": ("חריגה!", "bold red")}
 
 
@@ -40,10 +38,6 @@ def _starts_rtl(text: str) -> bool:
     """True if the first letter is Hebrew - then the line is right-aligned."""
     first = _ANY_LETTER.search(text)
     return bool(first and _HEBREW_LETTER.match(first.group()))
-
-
-def _money(amount: float) -> str:
-    return f"{amount:,.2f} {config.CURRENCY}"
 
 
 class TerminalUI(AgentUI):
@@ -110,7 +104,7 @@ class TerminalUI(AgentUI):
         if not result.get("ok"):
             self._line(f"✗ {name}: {result.get('error', 'שגיאה לא ידועה')}", "red")
             return
-        self._line(f"✓ {self._describe_result(name, result)}", "green")
+        self._line(f"✓ {describe_result(name, result)}", "green")
         for warning in result.get("warnings", []):
             self._line(f"⚠ {warning}", "yellow")
         for note in result.get("info", []):
@@ -179,39 +173,3 @@ class TerminalUI(AgentUI):
 
     def error(self, text: str) -> None:
         self._print(self._panel(text, "שגיאה", "red"))
-
-    # --- One readable line per tool result ---
-
-    def _describe_result(self, name: str, result: dict) -> str:
-        if name == "list_documents":
-            text = f"נמצאו {len(result['documents'])} מסמכים, מתוכם {result['new_count']} חדשים"
-            if result.get("unsupported_files"):
-                text += f" (לא נתמכים: {', '.join(result['unsupported_files'])})"
-            return text
-        if name == "read_document":
-            kind = _DOCUMENT_TYPES.get(result.get("document_type"), result.get("document_type"))
-            business = result.get("business") or "ללא שם עסק"
-            date = result.get("date") or result.get("date_printed") or "ללא תאריך"
-            total = _money(result["total"]) if result.get("total") is not None else "ללא סכום"
-            text = f"{kind} | {business} | {date} | {total}"
-            if known := result.get("known_business"):
-                by = "לפי ח.פ." if known["matched_by"] == "tax_id" else "לפי השם"
-                text += f" · עסק מוכר ({by}): {known['category']}"
-            return text
-        if name == "add_transaction":
-            t = result["transaction"]
-            text = (f"נרשם {t['id']}: {_TRANSACTION_TYPES.get(t['type'], t['type'])} {_money(t['amount'])}"
-                    f" – {t['category']} ({t['business']})")
-            if result.get("learned_business"):
-                text += " · נשמר בזיכרון לפעם הבאה"
-            return text
-        if name == "find_duplicate":
-            if not result["possible_duplicate"]:
-                return "לא נמצאה כפילות"
-            found = ", ".join(f"{c.get('id')} {c.get('business', '')}" for c in result["candidates"])
-            return f"נמצאו תנועות דומות: {found}"
-        if name == "skip_document":
-            return f"דולג: {result['reason']}"
-        if name == "get_monthly_summary":
-            return f"סיכום חודש {result['month']}: {result['transaction_count']} תנועות"
-        return name

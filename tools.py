@@ -616,3 +616,35 @@ def get_monthly_summary(month: str) -> dict:
     if not in_month:
         result["note"] = f"אין תנועות בחודש {month}"
     return result
+
+
+def correct_transaction(transaction_id: str, business: str, category: str) -> dict:
+    """Her correction of a recorded transaction (from the web dashboard) - not a tool the model can call.
+
+    The image reading can be wrong in a way the agent cannot notice (a test read "שרותי מזון" as
+    "שירותי מיזוג"), and the wrong name was then remembered by business number for every later
+    receipt. So the correction also replaces what was remembered: next time the agent uses her name.
+    """
+    if not isinstance(business, str) or not business.strip():
+        return _error("חסר שם העסק")
+    business = business.strip()
+    transactions = storage.load_transactions()
+    transaction = next((t for t in transactions if t.get("id") == transaction_id), None)
+    if transaction is None:
+        return _error(f"התנועה {transaction_id} לא נמצאה")
+    allowed = _categories_for(transaction.get("type"))
+    if category not in allowed:
+        return _error(f"הקטגוריה '{category}' לא קיימת. אפשריות: {', '.join(allowed)}")
+
+    old_business = transaction.get("business")
+    transaction["business"], transaction["category"] = business, category
+    transaction["corrected_at"] = datetime.now().isoformat(timespec="seconds")
+    storage.save_transactions(transactions)
+
+    # The old (misread) name is forgotten unless another transaction still uses it
+    memory = storage.load_memory()
+    if old_business != business and not any(t.get("business") == old_business for t in transactions):
+        memory["business_categories"].pop(old_business, None)
+        storage.save_memory(memory)
+    remember_business(business, category, transaction.get("tax_id"))
+    return {"ok": True, "transaction": transaction}

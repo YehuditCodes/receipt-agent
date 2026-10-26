@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>הארנק החכם</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧾</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">🧾</div>
+      <div>
+        <h1>הארנק החכם</h1>
+        <p>אג'נט שקורא קבלות ומנהל לך את החודש</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="month-picker">
+        <button class="icon-btn" id="prevMonth" title="החודש הקודם" aria-label="החודש הקודם">›</button>
+        <select id="monthSelect" aria-label="בחירת חודש"></select>
+        <button class="icon-btn" id="nextMonth" title="החודש הבא" aria-label="החודש הבא">‹</button>
+      </div>
+      <button class="icon-btn" id="themeToggle" title="מצב כהה / בהיר" aria-label="מצב כהה / בהיר">🌙</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="alert" id="pageError" hidden></div>
+
+    <section class="kpis">
+      <article class="kpi kpi-income">
+        <span class="kpi-label">הכנסות</span>
+        <strong class="kpi-value" id="kpiIncome">—</strong>
+      </article>
+      <article class="kpi kpi-expense">
+        <span class="kpi-label">הוצאות</span>
+        <strong class="kpi-value" id="kpiExpense">—</strong>
+      </article>
+      <article class="kpi kpi-balance">
+        <span class="kpi-label">יתרה</span>
+        <strong class="kpi-value" id="kpiBalance">—</strong>
+        <span class="kpi-sub" id="kpiCount"></span>
+      </article>
+    </section>
+
+    <div class="grid">
+      <div class="col">
+        <section class="card">
+          <div class="card-head">
+            <h2>מסמך חדש</h2>
+            <span class="status" id="agentStatus" data-state="idle">ממתין</span>
+          </div>
+
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" hidden>
+            <div class="dz-empty" id="dzEmpty">
+              <div class="dz-icon">⬆</div>
+              <strong>גררי לכאן צילום של קבלה, חשבון או תלוש</strong>
+              <span>או לחצי לבחירת קובץ · JPG, PNG, WEBP</span>
+            </div>
+            <div class="dz-preview" id="dzPreview" hidden>
+              <img id="previewImg" alt="תצוגה מקדימה של המסמך">
+              <div class="dz-file">
+                <strong id="previewName"></strong>
+                <span id="previewSize"></span>
+              </div>
+            </div>
+          </label>
+
+          <div class="actions">
+            <button class="btn btn-primary" id="sendBtn" disabled>
+              <span class="btn-spinner" hidden></span>
+              <span class="btn-label">שלחי לאג'נט</span>
+            </button>
+            <button class="btn btn-ghost" id="clearBtn" hidden>החלפת קובץ</button>
+          </div>
+          <p class="hint" id="pendingHint" hidden></p>
+        </section>
+
+        <section class="card feed-card">
+          <div class="card-head">
+            <h2>מה האג'נט עושה</h2>
+            <span class="muted small">כל צעד נבחר על ידי המודל</span>
+          </div>
+          <ol class="feed" id="feed">
+            <li class="feed-empty">כאן יופיעו הצעדים של האג'נט: מה הוא קורא, מה הוא מחליט ומה הוא שואל.</li>
+          </ol>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="card">
+          <div class="card-head"><h2>לאן הלך הכסף</h2></div>
+          <div class="donut-wrap">
+            <div class="donut">
+              <canvas id="donutChart" aria-label="הוצאות לפי קטגוריה"></canvas>
+              <div class="donut-center">
+                <span>סה"כ הוצאות</span>
+                <strong id="donutTotal">—</strong>
+              </div>
+            </div>
+            <ul class="legend" id="legend"></ul>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>תקציבים</h2></div>
+          <ul class="budgets" id="budgets"></ul>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>מגמה חודשית</h2></div>
+          <div class="trend"><canvas id="trendChart" aria-label="הכנסות והוצאות לפי חודש"></canvas></div>
+        </section>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>תנועות החודש</h2>
+        <span class="muted small" id="txCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="tx-table">
+          <thead>
+            <tr><th>תאריך</th><th>עסק</th><th>קטגוריה</th><th class="num">סכום</th><th></th></tr>
+          </thead>
+          <tbody id="txBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog class="modal" id="imageModal">
+    <form method="dialog"><button class="icon-btn modal-close" aria-label="סגירה">✕</button></form>
+    <img id="modalImg" alt="המסמך המקורי">
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
