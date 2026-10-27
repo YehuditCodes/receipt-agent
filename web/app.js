@@ -36,7 +36,7 @@ const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyV
 
 // A Latin file name inside a Hebrew line came out scrambled ("jpeg.003721_20261026"): wrap it in
 // Unicode isolate marks (LRI ... PDI) so it is laid out left-to-right as one unit.
-const FILE_NAME = /[\w\-]+(?:[ .()\-][\w\-()]+)*\.(?:jpe?g|png|webp)\b/gi;
+const FILE_NAME = /[\w\-]+(?:[ .()\-][\w\-()]+)*\.(?:jpe?g|png|webp|pdf)\b/gi;
 const isolateFileNames = (text) => String(text).replace(FILE_NAME, "\u2066$&\u2069");
 
 function el(tag, className, text) {
@@ -79,6 +79,8 @@ function renderDashboard() {
   countUp($("kpiIncome"), summary.income_total);
   countUp($("kpiExpense"), summary.expense_total);
   countUp($("kpiBalance"), summary.balance);
+  // Income comes from payslips only: without one, a negative balance needs this explanation
+  $("kpiIncomeNote").hidden = !(summary.income_total === 0 && summary.expense_total > 0);
   $("kpiCount").textContent = summary.transaction_count ? `${summary.transaction_count} תנועות בחודש` : "אין תנועות בחודש הזה";
   renderDonut(summary);
   renderBudgets(summary.budgets);
@@ -242,18 +244,30 @@ function renderTable(transactions) {
       view.append(button);
     }
     const edit = el("button", "view-btn", "✏️");
-    edit.title = "תיקון שם העסק או הקטגוריה";
+    edit.title = "תיקון התאריך, שם העסק, הקטגוריה או הסכום";
     edit.disabled = state.running;
-    edit.addEventListener("click", () => editRow(t, business, category, view));
+    const dateCell = el("td", "date", formatDate(t.date));
+    edit.addEventListener("click", () => editRow(t, { date: dateCell, business, category, amount, actions: view }));
     view.append(edit);
-    row.append(el("td", "date", formatDate(t.date)), business, category, amount, view);
+    row.append(dateCell, business, category, amount, view);
     body.append(row);
   }
 }
 
-// The image reading can be wrong (a test read "שרותי מזון" as "שירותי מיזוג"); her correction is
-// saved and also replaces what the agent remembers about this business.
-function editRow(t, businessCell, categoryCell, actionsCell) {
+// The image reading can be wrong (a test read "שרותי מזון" as "שירותי מיזוג", a handwritten 320 as 300);
+// her correction is saved and also replaces what the agent remembers about this business.
+function editRow(t, cells) {
+  const today = new Date().toLocaleDateString("en-CA");  // YYYY-MM-DD in local time
+  const dateInput = el("input", "edit-input");
+  dateInput.type = "date";
+  dateInput.max = today;
+  dateInput.value = t.date;
+  const amountInput = el("input", "edit-input");
+  amountInput.type = "number";
+  amountInput.min = "0.01";
+  amountInput.step = "0.01";
+  amountInput.inputMode = "decimal";
+  amountInput.value = Math.abs(t.amount);  // a refund keeps its sign (tools.correct_transaction)
   const input = el("input", "edit-input");
   input.value = t.business;
   const select = el("select", "edit-input");
@@ -264,8 +278,10 @@ function editRow(t, businessCell, categoryCell, actionsCell) {
     select.append(option);
   }
   select.value = t.category;
-  businessCell.replaceChildren(input);
-  categoryCell.replaceChildren(select);
+  cells.date.replaceChildren(dateInput);
+  cells.business.replaceChildren(input);
+  cells.category.replaceChildren(select);
+  cells.amount.replaceChildren(amountInput);
 
   const save = el("button", "btn btn-primary btn-small", "שמירה");
   const cancel = el("button", "btn btn-ghost btn-small", "ביטול");
@@ -276,7 +292,8 @@ function editRow(t, businessCell, categoryCell, actionsCell) {
       const response = await fetch(`/api/transactions/${encodeURIComponent(t.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ business: input.value, category: select.value }),
+        body: JSON.stringify({ business: input.value, category: select.value,
+                               date: dateInput.value, amount: Number(amountInput.value) }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail || "התיקון נכשל");
@@ -287,8 +304,14 @@ function editRow(t, businessCell, categoryCell, actionsCell) {
       save.disabled = false;
     }
   });
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); if (e.key === "Escape") cancel.click(); });
-  actionsCell.replaceChildren(save, cancel);
+  // "Save" only while every field is valid (a real past date, an amount above 0, a name)
+  const isValid = () => dateInput.value !== "" && dateInput.value <= today
+    && Number(amountInput.value) > 0 && amountInput.checkValidity() && input.value.trim() !== "";
+  for (const field of [dateInput, amountInput, input]) {
+    field.addEventListener("input", () => { save.disabled = !isValid(); });
+    field.addEventListener("keydown", (e) => { if (e.key === "Enter" && isValid()) save.click(); if (e.key === "Escape") cancel.click(); });
+  }
+  cells.actions.replaceChildren(save, cancel);
   input.focus();
   input.select();
 }
@@ -314,24 +337,32 @@ function renderPendingHint() {
 }
 
 function openImage(file) {
-  $("modalImg").src = `/api/files/${encodeURIComponent(file)}`;
+  const url = `/api/files/${encodeURIComponent(file)}`;
+  if (file.toLowerCase().endsWith(".pdf")) {
+    window.open(url, "_blank");  // the browser's own PDF viewer
+    return;
+  }
+  $("modalImg").src = url;
   $("imageModal").showModal();
 }
 
 // ---------- Upload ----------
 
-const SUPPORTED = ["jpg", "jpeg", "png", "webp"];
+const SUPPORTED = ["jpg", "jpeg", "png", "webp", "pdf"];
 
 function chooseFile(file) {
   if (!file || state.running) return;
   const extension = file.name.split(".").pop().toLowerCase();
   if (!SUPPORTED.includes(extension)) {
-    showPageError(`אפשר להעלות רק תמונות (${SUPPORTED.join(", ")}). קובץ PDF אפשר לצלם מסך ולהעלות את הצילום.`);
+    showPageError(`אפשר להעלות רק תמונות או PDF (${SUPPORTED.join(", ")}).`);
     return;
   }
   showPageError("");
   state.file = file;
-  $("previewImg").src = URL.createObjectURL(file);
+  const isPdf = extension === "pdf";  // a browser cannot show a PDF in an <img>
+  $("previewImg").hidden = isPdf;
+  $("previewPdf").hidden = !isPdf;
+  if (!isPdf) $("previewImg").src = URL.createObjectURL(file);
   $("previewName").textContent = file.name;
   $("previewSize").textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB`;
   $("dzEmpty").hidden = true;
@@ -429,6 +460,13 @@ function handleEvent(event, socket) {
     case "tool_result":
       showResult(event);
       break;
+    case "guard": {  // a Python rule stopped the step: a quiet note under it, not a red error
+      const step = pendingStep || addStep("🔧", "", null, "step");
+      pendingStep = null;
+      step.querySelector(".spinner")?.remove();
+      step.querySelector(".step-body").append(el("p", "step-note info", `🛡 ${event.text}`));
+      break;
+    }
     case "ask":
       setStatus("asking", "מחכה לתשובה שלך");
       addQuestion(event, socket);
@@ -521,12 +559,33 @@ function addQuestion(event, socket) {
   const form = el("form", "free-answer");
   const input = el("input");
   input.placeholder = event.options.length ? "או תשובה אחרת…" : "התשובה שלך…";
+  // A missing date / amount: a date picker or a number field, and "send" only for a valid value
+  // (a test run: "מ" was sent as a date). Python checks it again (tools.normalize_answer).
+  const today = new Date().toLocaleDateString("en-CA");  // YYYY-MM-DD in local time
+  if (event.answer_type === "date") {
+    input.type = "date";
+    input.max = today;
+  } else if (event.answer_type === "amount") {
+    input.type = "number";
+    input.min = "0.01";
+    input.step = "0.01";
+    input.inputMode = "decimal";
+    input.placeholder = "סכום ב-₪";
+  }
+  const isValid = () => {
+    const value = input.value.trim();
+    if (event.answer_type === "date") return value !== "" && value <= today;
+    if (event.answer_type === "amount") return Number(value) > 0 && input.checkValidity();
+    return value !== "";
+  };
   const submit = el("button", "btn btn-primary", "שליחה");
   submit.type = "submit";
+  submit.disabled = !isValid();
+  input.addEventListener("input", () => { submit.disabled = !isValid(); });
   form.append(input, submit);
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    if (input.value.trim()) send(input.value.trim(), null);
+    if (isValid()) send(input.value.trim(), null);
   });
   controls.push(input, submit);
   bubble.append(form);

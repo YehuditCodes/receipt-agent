@@ -24,11 +24,16 @@ class AgentUI(ABC):
         """A tool returned (the {"ok": ...} dict from tools.py)."""
 
     @abstractmethod
-    def ask(self, question: str, options: list[str] | None = None) -> str:
+    def guard(self, text: str) -> None:
+        """A rule checked in Python stopped the model's step (text: one line in the user's words)."""
+
+    @abstractmethod
+    def ask(self, question: str, options: list[str] | None = None, answer_type: str = "text") -> str:
         """Ask the user a question and return the answer (stripped, may be empty).
 
         With `options` (chosen by the agent, e.g. likely categories) the user picks one of them
         or types a free answer; the chosen option's text is returned.
+        `answer_type` "date" / "amount": a typed answer must be a valid one (tools.normalize_answer).
         """
 
     @abstractmethod

@@ -17,6 +17,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+import tools
 from ui.base import AgentUI
 from ui.describe import describe_result, money as _money
 
@@ -110,13 +111,16 @@ class TerminalUI(AgentUI):
         for note in result.get("info", []):
             self._line(f"ℹ {note}", "dim")
 
-    def ask(self, question: str, options: list[str] | None = None) -> str:
+    def guard(self, text: str) -> None:
+        self._line(f"🛡 {text}", "dim")
+
+    def ask(self, question: str, options: list[str] | None = None, answer_type: str = "text") -> str:
         # The terminal shows typed Hebrew reversed, so when the agent offers options the user
         # types only a number. The last number is always "type my own answer".
         options = [o for o in (options or []) if isinstance(o, str) and o.strip()]
         if not options:
             self._print(self._panel(question, "שאלה אלייך", "yellow"))
-            return self._free_answer()
+            return self._free_answer(answer_type)
 
         own_answer = len(options) + 1
         lines = [question, ""] + [f"{n} – {o}" for n, o in enumerate(options, 1)]
@@ -131,14 +135,19 @@ class TerminalUI(AgentUI):
                 self._line(f"✓ בחרת: {choice}", "yellow")
                 return choice
             if answer == str(own_answer):
-                return self._free_answer()
+                return self._free_answer(answer_type)
             self._line(f"יש להקליד מספר בין 1 ל-{own_answer}", "red")
 
     def _input(self) -> str:
         return self.console.input("[bold yellow]> [/bold yellow]").strip()
 
-    def _free_answer(self) -> str:
+    def _free_answer(self, answer_type: str = "text") -> str:
         answer = self._input()
+        # A date / amount is asked again until it is a valid one (or left empty)
+        while answer and answer_type != "text" and tools.normalize_answer(answer, answer_type) is None:
+            example = "למשל 14.3.2025" if answer_type == "date" else "מספר גדול מ-0, למשל 200"
+            self._line(f"זה לא {'תאריך' if answer_type == 'date' else 'סכום'} תקין ({example}). נסי שוב:", "red")
+            answer = self._input()
         # Echo the answer: while typing, the terminal showed the Hebrew letters reversed
         if answer:
             self._line(f"✓ התשובה שלך: {answer}", "yellow")

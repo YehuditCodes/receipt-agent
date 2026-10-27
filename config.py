@@ -36,7 +36,8 @@ SKIPPED_FILE = DATA_DIR / "skipped.json"
 READ_CACHE_FILE = DATA_DIR / "read_cache.json"
 USE_READ_CACHE = True
 
-SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+# PDF goes to the model as is (text + an image of each page); one PDF = one document
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
 
 # --- Reading images (read_document) ---
 # Larger files are refused before sending (OpenAI's own limit is 20 MB).
@@ -49,6 +50,9 @@ READ_TIMEOUT_SECONDS = 90
 YEAR_MISREAD_DAYS = 90
 # Cross-checks (items vs total, payments vs total) allow this much difference (₪) for rounding.
 AMOUNT_TOLERANCE = 0.5
+# Some receipts list item prices before VAT (a test receipt: 119.49 + 18% = 141.00).
+# Israeli VAT: 18% since 2025, 17% before.
+VAT_RATES = (0.18, 0.17)
 
 CURRENCY = "₪"
 
@@ -117,10 +121,6 @@ BUDGETS = {
     "פנאי ובילויים": 400,
 }
 
-# At the end of a run a summary is shown for the current month and for each month in the last
-# this-many months (including the current one) in which something was recorded. Older documents
-# are recorded as usual, just without a summary table (the data keeps every month).
-SUMMARY_RECENT_MONTHS = 3
 
 # Warn "close to budget" from this share of the budget; above 100% it is an overrun.
 BUDGET_WARNING_RATIO = 0.8
@@ -131,8 +131,6 @@ def check_config() -> None:
     problems = []
     if not isinstance(MAX_STEPS, int) or MAX_STEPS < 1:
         problems.append("MAX_STEPS חייב להיות מספר שלם חיובי")
-    if not isinstance(SUMMARY_RECENT_MONTHS, int) or SUMMARY_RECENT_MONTHS < 1:
-        problems.append("SUMMARY_RECENT_MONTHS חייב להיות מספר שלם חיובי")
     if not isinstance(BUDGET_WARNING_RATIO, (int, float)) or not 0 < BUDGET_WARNING_RATIO < 1:
         problems.append("BUDGET_WARNING_RATIO חייב להיות בין 0 ל-1")
     if READ_REASONING_EFFORT not in ("none", "low", "medium", "high"):

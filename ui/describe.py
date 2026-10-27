@@ -17,6 +17,9 @@ def describe_result(name: str, result: dict) -> str:
         text = f"נמצאו {len(result['documents'])} מסמכים, מתוכם {new}"
         if result.get("unsupported_files"):
             text += f" (לא נתמכים: {', '.join(result['unsupported_files'])})"
+        # A copy of a recorded file found in this run - otherwise "0 new" alone does not say why
+        for copy in result.get("copies_now", []):
+            text += f" · {copy['file']} הוא עותק של {copy['copy_of']} (כבר רשום)"
         return text
     if name == "read_document":
         kind = DOCUMENT_TYPES.get(result.get("document_type"), result.get("document_type"))

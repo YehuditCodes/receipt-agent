@@ -94,18 +94,31 @@ def _known_business(tax_id: str | None, business: str | None) -> dict | None:
 # --- Tools ---
 
 def list_documents() -> dict:
-    """Images in inbox/, each marked whether it was already recorded or skipped on purpose (by file name)."""
+    """Images in inbox/, each marked whether it was already recorded or skipped on purpose.
+
+    Already recorded = by file name, or an exact copy of a recorded file (same content). A test run:
+    two re-uploaded copies (x-2, x-3) were read and questioned before the copy was noticed.
+    """
     if not config.INBOX_DIR.is_dir():
         return _error(f"תיקיית הקלט {config.INBOX_DIR} לא קיימת")
 
-    recorded = {t.get("source_file") for t in storage.load_transactions()}
+    transactions = storage.load_transactions()
+    recorded = {t.get("source_file") for t in transactions}
+    recorded_content = {}  # fingerprint of a recorded file -> its transaction id
+    for t in transactions:
+        if (content := _file_content(t.get("source_file"))) is not None:
+            recorded_content.setdefault(hashlib.sha256(content).hexdigest(), t.get("id"))
     skipped = storage.load_skipped()
     documents, unsupported = [], []
     for path in sorted(config.INBOX_DIR.iterdir()):
         if not path.is_file() or path.name.startswith("."):  # skip folders and .gitkeep
             continue
-        if path.suffix.lower() in config.SUPPORTED_IMAGE_EXTENSIONS:
+        if path.suffix.lower() in config.SUPPORTED_EXTENSIONS:
             document = {"file": path.name, "already_recorded": path.name in recorded}
+            if not document["already_recorded"]:
+                copy_of = recorded_content.get(hashlib.sha256(path.read_bytes()).hexdigest())
+                if copy_of:
+                    document.update(already_recorded=True, copy_of=copy_of)
             if path.name in skipped:
                 document["skipped"] = skipped[path.name]["reason"]
             documents.append(document)
@@ -126,7 +139,8 @@ def list_documents() -> dict:
 # --- read_document: the image-reading prompt and the exact JSON shape the model must return ---
 
 READ_PROMPT = """You read ONE image of an Israeli financial document and extract its data.
-Report only what is printed. Never guess: if a field cannot be read, use null.
+Report only what is written on the document - printed or handwritten (many receipts are filled in by
+hand: amount, date, what was paid for). Never guess: if a field cannot be read with certainty, use null.
 
 document_type:
 - "receipt": any proof of money paid (קבלה / חשבונית מס קבלה / חשבונית מס) - a store, restaurant,
@@ -154,7 +168,8 @@ tax_id: the issuer's Israeli business number - ח.פ. / ע.מ. / עוסק מור
 or תיק ניכויים if there is no ח.פ.). Not the customer's ID (ת.ז. after לכבוד), not a phone, receipt or
 terminal number. null if not printed or not fully readable.
 
-date_printed: the document's date copied exactly as printed (e.g. "03/03/10"), without the time.
+date_printed: the document's date copied exactly as written - printed or handwritten (e.g. "03/03/10",
+"14.3.2025") - without the time.
 Do not convert or reorder it.
 - receipt / refund: the purchase date
 - bill: the issue date, labeled תאריך הפקה / תאריך עריכה / תאריך עריכת החשבון (the label may be on
@@ -162,6 +177,9 @@ Do not convert or reorder it.
   never take a date from the period line (מ- ... עד ... / תקופת החשבון) or the due date (לשלם עד)
 - payslip: the issue date (הודפס בתאריך) if printed; otherwise the last day of the salary month
   (e.g. "תלוש לחודש יוני 2026" -> "30/06/2026")
+
+date_handwritten: true if the date is written by hand, false if it is printed.
+total_handwritten: true if the total is written by hand, false if it is printed.
 
 billing_period_end_printed: bills only - the last day of the billing period (תקופת החשבון), exactly as
 printed. null for other documents.
@@ -203,6 +221,8 @@ READ_SCHEMA = {
         "business": _NULLABLE_STRING,
         "tax_id": _NULLABLE_STRING,
         "date_printed": _NULLABLE_STRING,
+        "date_handwritten": {"type": "boolean"},
+        "total_handwritten": {"type": "boolean"},
         "billing_period_end_printed": _NULLABLE_STRING,
         "total": _NULLABLE_NUMBER,
         "payments": {
@@ -229,11 +249,12 @@ READ_SCHEMA = {
         "notes": _NULLABLE_STRING,
     },
     "required": ["readable", "unreadable_reason", "document_type", "business", "tax_id",
-                 "date_printed", "billing_period_end_printed", "total", "payments", "change", "currency", "total_ils_printed", "items", "notes"],
+                 "date_printed", "date_handwritten", "total_handwritten", "billing_period_end_printed", "total", "payments", "change", "currency", "total_ils_printed", "items", "notes"],
     "additionalProperties": False,
 }
 
-_MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+_MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+               ".pdf": "application/pdf"}
 
 
 @functools.cache
@@ -243,9 +264,14 @@ def _openai_client() -> openai.OpenAI:
 
 
 def _ask_model_to_read(path) -> dict:
-    """Send the image to the model and return its parsed reply. Raises on API problems."""
-    image_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-    image_url = f"data:{_MIME_TYPES[path.suffix.lower()]};base64,{image_b64}"
+    """Send the image (or PDF) to the model and return its parsed reply. Raises on API problems."""
+    file_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+    data_url = f"data:{_MIME_TYPES[path.suffix.lower()]};base64,{file_b64}"
+    if path.suffix.lower() == ".pdf":
+        document_part = {"type": "file", "file": {"filename": path.name, "file_data": data_url}}
+    else:
+        # Always high detail: in tests, low detail invented items that are not on the receipt
+        document_part = {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}
     response = _openai_client().chat.completions.create(
         model=config.READ_MODEL,  # no temperature: gpt-5 models accept only the default
         reasoning_effort=config.READ_REASONING_EFFORT,
@@ -255,10 +281,7 @@ def _ask_model_to_read(path) -> dict:
         },
         messages=[
             {"role": "system", "content": READ_PROMPT},
-            {"role": "user", "content": [
-                # Always high detail: in tests, low detail invented items that are not on the receipt
-                {"type": "image_url", "image_url": {"url": image_url, "detail": "high"}},
-            ]},
+            {"role": "user", "content": [document_part]},
         ],
     )
     message = response.choices[0].message
@@ -291,6 +314,24 @@ def _cached_reading(path) -> dict:
 _MONTH_NAMES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 
 
+def normalize_answer(answer: str, answer_type: str) -> str | None:
+    """Her answer to a question about a missing date or amount, in the form the tools use - or None
+    if it is not a valid one. A test run: she typed "מ" and "222222" for a date and an amount.
+    "date" -> "YYYY-MM-DD" (not in the future); "amount" -> a number above 0, e.g. "200.0".
+    """
+    answer = answer.strip()
+    if answer_type == "date":
+        date = answer if _check_date(answer) is None else _parse_printed_date(answer)
+        return date if date and _check_date(date) is None else None
+    if answer_type == "amount":
+        try:
+            amount = float(re.sub(r"[₪,\s]|ש\"?ח|שקל(ים)?", "", answer))
+        except ValueError:
+            return None
+        return str(_round_money(amount)) if math.isfinite(amount) and amount > 0 else None
+    return answer or None
+
+
 def _parse_printed_date(printed: str | None) -> str | None:
     """Israeli day-first date as printed ("03/03/10", "27.02.19", "10/07/2020") -> "YYYY-MM-DD".
 
@@ -321,7 +362,8 @@ def _parse_printed_date(printed: str | None) -> str | None:
         return None
 
 
-_MISSING_BUSINESS = "לא נמצא שם עסק – לשאול את המשתמשת (לא לרשום שם כמו 'לא ידוע')"
+# Warnings state facts in her words: what to do about them is in the agent's prompt (and its Python guard)
+_MISSING_BUSINESS = "לא נמצא שם עסק"
 
 
 def _likely_misread_year(date: str, printed: str) -> str | None:
@@ -413,6 +455,7 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
     info is worth knowing but does not block recording.
     """
     warnings, info = [], []
+    reading["confirm"] = []  # values she must confirm herself ("date", "amount") - checked by the agent loop
     # Names sometimes come back split over lines ("מגה בול\nבול סגולה")
     reading["business"] = " ".join((reading["business"] or "").split()).strip(" :;,.-") or None
     printed_tax_id = reading["tax_id"]
@@ -424,9 +467,13 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
         warnings.append("זו לא הוכחת תשלום (לא קבלה, חשבון או תלוש)"
                         + (f": {reading['notes']}" if reading.get("notes") else "")
                         + ". הוצאה נרשמת לפי הקבלה כשמשלמים – אם נרשום גם את המסמך הזה וגם את הקבלה, "
-                        "הסכום ייספר פעמיים. לא לרשום בלי לשאול את המשתמשת")
+                        "הסכום ייספר פעמיים")
     if reading["total"] is None:
         warnings.append("לא נמצא סכום כולל")
+    elif reading.get("total_handwritten"):
+        # A test run: a handwritten 320 was read as 300 - Python cannot check handwritten digits
+        warnings.append(f"הסכום כתוב ביד ונקרא {reading['total']} ₪ – ספרות בכתב יד עלולות להיקרא לא נכון")
+        reading["confirm"].append("amount")
     if reading["business"] is None:
         warnings.append(_MISSING_BUSINESS)
 
@@ -434,14 +481,19 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
     if reading["date_printed"] is None:
         warnings.append("לא נמצא תאריך על המסמך")
     elif reading["date"] is None:
-        warnings.append(f"לא הצלחתי להבין את התאריך '{reading['date_printed']}' – לשאול את המשתמשת")
+        warnings.append(f"לא הצלחתי להבין את התאריך '{reading['date_printed']}'")
     elif problem := _check_date(reading["date"]):
         warnings.append(f"{problem} (מודפס: {reading['date_printed']})")
     elif likely := _likely_misread_year(reading["date"], reading["date_printed"]):
         warnings.append(
-            f"ייתכן שהשנה נקראה לא נכון: נקרא {reading['date']}, אולי {likely} (מודפס: {reading['date_printed']}) – "
-            "לוודא עם המשתמשת"
+            f"ייתכן שהשנה נקראה לא נכון – התאריך הסביר: {likely} (נקרא {reading['date']}, מודפס: {reading['date_printed']})"
         )
+        reading["confirm"].append("date")
+    elif reading.get("date_handwritten") and (likely := _handwritten_year(reading["date"], reading["date_printed"])):
+        warnings.append(
+            f"השנה כתובה ביד – התאריך הסביר: {likely} (נקרא {reading['date']}, כתוב: {reading['date_printed']})"
+        )
+        reading["confirm"].append("date")
 
     # Cross-check: a bill is issued after its billing period ends. In tests the model
     # sometimes returned the period end instead of the issue date.
@@ -471,7 +523,10 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
     if prices and reading["total"] is not None:
         items_sum = _round_money(sum(prices))
         reading["items_sum"] = items_sum
-        reading["items_match_total"] = abs(items_sum - reading["total"]) <= config.AMOUNT_TOLERANCE
+        reading["items_match_total"] = any(
+            abs(items_sum * (1 + vat) - reading["total"]) <= config.AMOUNT_TOLERANCE
+            for vat in (0, *config.VAT_RATES)
+        )
         # Info only: on long receipts the model often misses lines, while the big total is reliable
         if not reading["items_match_total"]:
             info.append(
@@ -479,6 +534,27 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
                 "רשימת הפריטים חלקית; הסה\"כ אמין, הפריטים רק רמז לקטגוריה"
             )
     return warnings, info
+
+
+def _handwritten_year(date: str, printed: str) -> str | None:
+    """For a handwritten two-digit year that is not this year: the latest past date with the same day and month.
+
+    A test run: "15/3/26" written by hand was read as 15/3/22 and recorded without a question
+    (_likely_misread_year covers only the last few months). A printed year is not questioned -
+    an old printed receipt (a 2013 fuel receipt) must not get a question.
+    """
+    if re.search(r"\d{4}", printed):
+        return None
+    today = calendar_date.today()
+    read = calendar_date.fromisoformat(date)
+    for year in (today.year, today.year - 1):
+        try:
+            candidate = read.replace(year=year)
+        except ValueError:  # 29/02 in a non-leap year
+            continue
+        if candidate <= today:
+            return candidate.isoformat() if candidate != read else None
+    return None
 
 
 @functools.lru_cache(maxsize=256)
@@ -545,8 +621,8 @@ def read_document(file: str) -> dict:
         return _error(f"'{file}' אינו שם קובץ תקין – יש לשלוח שם קובץ מתוך list_documents")
     if not path.is_file():
         return _error(f"הקובץ '{file}' לא נמצא בתיקיית inbox")
-    if path.suffix.lower() not in config.SUPPORTED_IMAGE_EXTENSIONS:
-        return _error(f"סוג הקובץ '{path.suffix}' לא נתמך. נתמכים: {', '.join(sorted(config.SUPPORTED_IMAGE_EXTENSIONS))}")
+    if path.suffix.lower() not in config.SUPPORTED_EXTENSIONS:
+        return _error(f"סוג הקובץ '{path.suffix}' לא נתמך. נתמכים: {', '.join(sorted(config.SUPPORTED_EXTENSIONS))}")
     size_mb = path.stat().st_size / (1024 * 1024)
     if size_mb > config.MAX_IMAGE_MB:
         return _error(f"הקובץ גדול מדי ({size_mb:.1f}MB, מקסימום {config.MAX_IMAGE_MB}MB) – יש להקטין את התמונה")
@@ -555,7 +631,7 @@ def read_document(file: str) -> dict:
         reading = _cached_reading(path)
     except openai.BadRequestError as e:
         # Usually a damaged file or a file that is not really an image
-        return _error(f"המודל לא הצליח לפתוח את '{file}' – ייתכן שהקובץ פגום או שאינו תמונה ({e.message})")
+        return _error(f"המודל לא הצליח לפתוח את '{file}' – ייתכן שהקובץ פגום או שאינו תמונה או PDF ({e.message})")
     except openai.APITimeoutError:
         return _error(f"קריאת '{file}' לקחה יותר מ-{config.READ_TIMEOUT_SECONDS} שניות – אפשר לנסות שוב בהמשך")
     # Other API errors (no internet, no credit, wrong key) are not about this image: they would
@@ -565,7 +641,7 @@ def read_document(file: str) -> dict:
 
     if not reading["readable"]:
         reason = reading["unreadable_reason"] or "התמונה לא ברורה"
-        return _error(f"{reason}. התמונה לא ברורה – יש לבקש מהמשתמשת להעלות אותה שוב")
+        return _error(f"{reason}. התמונה לא ברורה – צריך לצלם אותה שוב")
 
     warnings, info = _check_reading(reading)
     registry_name = _apply_registry_name(reading, warnings, info)
@@ -654,15 +730,23 @@ def find_duplicate(date: str, amount: float, source_file: str | None = None, tax
         return _error(problem)
 
     tax_id = _valid_tax_id(tax_id)
+    # A copy of a recorded image under another name (a test run uploaded "x-2.jpeg" and recorded it twice)
+    content = _file_content(source_file)
     candidates = []
     for t in storage.load_transactions():
         same_amount = t.get("amount") == _round_money(amount)
         if source_file is not None and t.get("source_file") == source_file:
             matched_by = "same_file"
+        elif content is not None and _file_content(t.get("source_file")) == content:
+            matched_by = "same_file_content"
         elif same_amount and t.get("date") == date:
             matched_by = "date_and_amount"
         elif same_amount and tax_id and t.get("tax_id") == tax_id and str(t.get("date", ""))[5:] == date[5:]:
             matched_by = "business_number_amount_and_day"
+        elif tax_id and t.get("tax_id") == tax_id and t.get("date") == date:
+            # Another photo of the same handwritten receipt can come back with another amount
+            # (630 / 650) - the same business on the same day may be the same receipt: she decides
+            matched_by = "same_business_and_date"
         else:
             continue
         candidates.append({
@@ -674,6 +758,29 @@ def find_duplicate(date: str, amount: float, source_file: str | None = None, tax
             "matched_by": matched_by,
         })
     return {"ok": True, "candidates": candidates, "possible_duplicate": bool(candidates)}
+
+
+def recorded_copy(file) -> str | None:
+    """The id of a recorded transaction whose image has exactly the same content as this file, or None.
+
+    A test run: a re-uploaded copy (x-2.jpeg) was found by find_duplicate, yet the model asked about
+    the amount and recorded it again - the same bytes are the same document, for certain.
+    """
+    content = _file_content(file)
+    if content is None:
+        return None
+    for t in storage.load_transactions():
+        if t.get("source_file") != file and _file_content(t.get("source_file")) == content:
+            return t.get("id")
+    return None
+
+
+def _file_content(file) -> bytes | None:
+    """The bytes of a file directly inside inbox/, or None."""
+    if not isinstance(file, str) or (config.INBOX_DIR / file).name != file:
+        return None
+    path = config.INBOX_DIR / file
+    return path.read_bytes() if path.is_file() else None
 
 
 def skip_document(file: str, reason: str) -> dict:
@@ -767,8 +874,12 @@ def get_monthly_summary(month: str) -> dict:
     return result
 
 
-def correct_transaction(transaction_id: str, business: str, category: str) -> dict:
+def correct_transaction(transaction_id: str, business: str, category: str,
+                        date: str | None = None, amount: float | None = None) -> dict:
     """Her correction of a recorded transaction (from the web dashboard) - not a tool the model can call.
+
+    date and amount too (optional): a handwritten amount can be misread, and before this she could
+    only fix the name and category. The amount keeps its sign - a refund stays negative.
 
     The image reading can be wrong in a way the agent cannot notice (a test read "שרותי מזון" as
     "שירותי מיזוג"), and the wrong name was then remembered by business number for every later
@@ -784,9 +895,20 @@ def correct_transaction(transaction_id: str, business: str, category: str) -> di
     allowed = _categories_for(transaction.get("type"))
     if category not in allowed:
         return _error(f"הקטגוריה '{category}' לא קיימת. אפשריות: {', '.join(allowed)}")
+    if date is not None and (problem := _check_date(date)):
+        return _error(problem)
+    if amount is not None:
+        if problem := _check_amount(amount):
+            return _error(problem)
+        if amount < 0:
+            return _error("הסכום חייב להיות חיובי (זיכוי נשאר זיכוי)")
 
     old_business = transaction.get("business")
     transaction["business"], transaction["category"] = business, category
+    if date is not None:
+        transaction["date"] = date
+    if amount is not None:
+        transaction["amount"] = -_round_money(amount) if transaction.get("amount", 0) < 0 else _round_money(amount)
     transaction["corrected_at"] = datetime.now().isoformat(timespec="seconds")
     storage.save_transactions(transactions)
 

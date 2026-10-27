@@ -107,8 +107,8 @@ def _free_name(name: str) -> str:
 async def upload(request: Request, name: str) -> dict:
     """Save one image (the request body is the file itself) to inbox/."""
     extension = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if extension not in config.SUPPORTED_IMAGE_EXTENSIONS:
-        raise HTTPException(400, f"אפשר להעלות רק תמונות ({', '.join(sorted(config.SUPPORTED_IMAGE_EXTENSIONS))})")
+    if extension not in config.SUPPORTED_EXTENSIONS:
+        raise HTTPException(400, f"אפשר להעלות רק תמונות או PDF ({', '.join(sorted(config.SUPPORTED_EXTENSIONS))})")
     body = await request.body()
     if not body:
         raise HTTPException(400, "הקובץ ריק")
@@ -131,7 +131,7 @@ def inbox_file(name: str) -> FileResponse:
 
 @app.patch("/api/transactions/{transaction_id}")
 async def correct(transaction_id: str, request: Request) -> dict:
-    """Her correction of a business name / category; it also corrects what the agent remembers."""
+    """Her correction of a business name / category / date / amount; it also corrects what the agent remembers."""
     try:
         body = await request.json()
     except json.JSONDecodeError:
@@ -142,7 +142,8 @@ async def correct(transaction_id: str, request: Request) -> dict:
     if not _run_lock.acquire(blocking=False):
         raise HTTPException(409, "האג'נט עובד כרגע. אפשר לתקן כשיסיים.")
     try:
-        result = tools.correct_transaction(transaction_id, body.get("business"), body.get("category"))
+        result = tools.correct_transaction(transaction_id, body.get("business"), body.get("category"),
+                                           body.get("date"), body.get("amount"))
     finally:
         _run_lock.release()
     if not result["ok"]:

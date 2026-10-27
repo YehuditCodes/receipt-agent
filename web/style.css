@@ -208,6 +208,7 @@ button, select, input { font: inherit; color: inherit; }
 .kpi-balance::before { display: none; }
 .kpi-balance .kpi-label, .kpi-balance .kpi-sub { color: rgba(255, 255, 255, .85); }
 .kpi-sub { font-size: 13px; }
+.kpi-income .kpi-sub { color: var(--muted); }
 
 /* --- Upload --- */
 .dropzone {
@@ -236,6 +237,7 @@ button, select, input { font: inherit; color: inherit; }
 }
 .dz-preview { display: flex; align-items: center; gap: 14px; padding: 12px; }
 .dz-preview img { width: 84px; height: 104px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); }
+.pdf-thumb { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 84px; height: 104px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-weight: 700; letter-spacing: .05em; }
 .dz-file { display: flex; flex-direction: column; min-width: 0; }
 .dz-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dz-file span { color: var(--muted); font-size: 13px; }

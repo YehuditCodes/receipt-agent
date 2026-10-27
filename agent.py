@@ -42,7 +42,9 @@ RULES
 - read_document "warnings" mean the reading may be wrong: do not record blindly. Ask her, say
   what looks wrong, and record only what she confirms (or skip if she says so). add_transaction
   refuses a file with warnings until she has answered a question about that file.
-  "info" is for your knowledge only and does not block recording.
+  "info" is for your knowledge only and does not block recording - it is never a reason to ask.
+  Items that do not add up to the total are normal (lines missed, prices before VAT): the total
+  is what is recorded, the items only hint at the category.
 - Questions: ask about ONE document per ask_user call and pass its file name in "file" (her screen
   then shows the document's business, date and amount above your question). Never mention the file
   name in the question itself - she does not know file names. Ask about the specific problem (the
@@ -54,8 +56,21 @@ RULES
   document and mention it in the final report.
 - If read_document returns an error (e.g. a blurry image), do not record anything for that file;
   tell her in the final report which files to upload again.
+- A warning that the year may be misread gives "התאריך הסביר": ask with two options - that likely date
+  first with " (מומלץ)", then the date that was read (she then clicks instead of typing).
+- A warning that the total is handwritten: ask her to confirm it, with answer_type "amount" and the
+  option "<amount> ₪ – נכון" (one click if right; otherwise she types the amount).
+- Options are shown as buttons: do not list them again in the question text.
+- A date and a handwritten amount that both need her: two questions, one for each (add_transaction
+  records them only as she gave them).
+- find_duplicate matched_by "same_file_content": the very same image is already recorded - skip it
+  as a duplicate without asking.
+- find_duplicate matched_by "same_business_and_date" (same business and day, another amount): maybe
+  another photo of the same receipt, maybe a second purchase - ask her, naming both amounts, with the
+  options "כן, אותה קבלה (לא לרשום)" and "לא, קבלה נפרדת". Same receipt -> skip_document.
 - If the business name, the date or the amount is missing, ask her for that value directly (no
-  options except "לא לרשום"). Never invent a value: no placeholder such as "לא ידוע", no name guessed
+  options except "לא לרשום") - one question per missing value; for a date or an amount pass
+  answer_type "date" / "amount" (the answer then comes back as YYYY-MM-DD / a number). Never invent a value: no placeholder such as "לא ידוע", no name guessed
   from a slogan or logo, and never today's date for a document without a date.
 - Type: receipt and bill -> expense; a bill's category is "חשבונות בית". payslip -> income, category
   "משכורת". refund -> expense with a
@@ -84,20 +99,25 @@ RULES
   Every recorded business is remembered automatically for next time.
 - If a tool returns ok=false, read the error: fix the values and try again, or ask her.
 - Never calculate totals or budgets yourself - get_monthly_summary does that.
-- When all documents are handled, call get_monthly_summary for the current month ({this_month}) and
-  for each of these recent months in which you recorded a transaction during this run: {recent_months}.
-  Older documents are recorded as usual, without a summary.
-- Before each tool call, write one short sentence in Hebrew saying what you are doing and why.
+- When all documents are handled, call get_monthly_summary for each month (any year) in which you
+  recorded a transaction during this run. If you recorded nothing, no summary.
+- Explain your decisions, not your routine: before a tool call that is a decision, write one short
+  sentence in Hebrew saying why (e.g. why you ask her, skip a file, read again, or chose a category
+  without asking). Routine steps (listing the inbox, reading a document, checking duplicates,
+  recording an obvious document, the summaries) need no sentence - the step itself shows what happens.
+  "No sentence" is not "skip": every rule above still applies (always find_duplicate before recording).
+  The sentence is shown to her: speak to her in the second person, feminine ("אשאל אותך על הקטגוריה,
+  כי..."), never about her ("לשאול אותה", "שלה").
 
 FINAL ANSWER (when you are done, answer without calling a tool), in Hebrew, usually one or two sentences:
-- what was recorded (businesses and categories) - always.
+- what was recorded (businesses and categories) - only if something was recorded; never say a
+  document was recorded when it was skipped.
 - ONLY IF a document was skipped: which and why.
 - ONLY IF a file could not be read: which to upload again.
-- ONLY IF a budget is near or over: say "קרוב לתקציב" or "חריגה מהתקציב" with the category.
-Leave out every part that did not happen - never write that nothing was skipped, no file needs uploading
-or no budget is near. Do not describe your process (the questions you asked) and do not repeat the
+Leave out every part that did not happen - never write that nothing was skipped or no file needs uploading. Do not describe your process (the questions you asked) and do not repeat the
 summary table - she already sees it.
-Do not count documents or transactions - Python adds the exact numbers under your answer.
+Do not count documents or transactions and do not mention budgets - Python adds the exact numbers and
+the budget warnings under your answer.
 
 Expense categories (what belongs in each):
 {expense_categories}
@@ -113,7 +133,8 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_documents",
-            "description": "List the images in the inbox; each is marked already_recorded if it was recorded before.",
+            "description": "List the images in the inbox; each is marked already_recorded if it was recorded before "
+                           "(copy_of: an exact copy of that recorded transaction's file).",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -213,6 +234,9 @@ TOOL_DEFINITIONS = [
                     "file": {"type": "string", "description": "The document this question is about (one per question)"},
                     "options": {"type": "array", "items": {"type": "string"},
                                 "description": "Optional likely answers (e.g. 2-4 categories); she picks one by number"},
+                    "answer_type": {"type": "string", "enum": ["text", "date", "amount"],
+                                    "description": "'date' or 'amount' when asking for a missing date or amount: "
+                                                   "her screen then accepts only a valid one. Default 'text'"},
                 },
                 "required": ["question"],
             },
@@ -245,16 +269,28 @@ class _RunState:
     converted: dict[str, dict] = field(default_factory=dict)  # file -> {"total" in ₪, "original": ...}
     answers: dict[str, list[str]] = field(default_factory=dict)  # file -> her answers about it
     documents: dict[str, str] = field(default_factory=dict)  # file -> "business · date · amount"
+    duplicate_checked: set[tuple] = field(default_factory=set)  # (date, amount) passed to find_duplicate
+    recorded_categories: set[tuple] = field(default_factory=set)  # (month, category) of recorded expenses
+    summaries: dict[str, dict] = field(default_factory=dict)  # month -> the summary she was shown
+    copies: list[str] = field(default_factory=list)  # "file (copy of tNNN)" marked skipped in this run
+    confirm: dict[str, list[str]] = field(default_factory=dict)  # file -> values she must confirm ("date", "amount")
+    maybe_same: set[str] = field(default_factory=set)  # files that may be another photo of a recorded receipt
 
 
-def _recent_months() -> list[str]:
-    """The current month and the ones before it ("YYYY-MM"), config.SUMMARY_RECENT_MONTHS in all."""
-    today = calendar_date.today()
-    months = []
-    for back in range(config.SUMMARY_RECENT_MONTHS):
-        year, month = divmod(today.year * 12 + today.month - 1 - back, 12)
-        months.append(f"{year}-{month + 1:02d}")
-    return months
+# Steps where the model decides something; its sentence before other steps only repeats the step title
+_DECISION_TOOLS = {"add_transaction", "skip_document", "ask_user"}
+
+
+def _is_decision(call, state: _RunState) -> bool:
+    """Whether the model's sentence before this call is shown: a decision, or reading a document again."""
+    if call.function.name in _DECISION_TOOLS:
+        return True
+    if call.function.name == "read_document":
+        try:
+            return json.loads(call.function.arguments or "{}").get("file") in state.documents
+        except (json.JSONDecodeError, AttributeError):
+            return False
+    return False
 
 
 def _system_prompt() -> str:
@@ -264,7 +300,6 @@ def _system_prompt() -> str:
     return SYSTEM_PROMPT.format(
         today=today.isoformat(),
         this_month=today.strftime("%Y-%m"),
-        recent_months=", ".join(_recent_months()),
         expense_categories="\n".join(f"- {c}: {config.CATEGORY_DESCRIPTIONS.get(c, '')}" for c in config.EXPENSE_CATEGORIES),
         income_categories=", ".join(config.INCOME_CATEGORIES),
         currency=config.CURRENCY,
@@ -291,34 +326,81 @@ def _evidence_found(evidence, names: list[str]) -> bool:
     return len(evidence) >= 2 and any(evidence in clean(name) for name in names)
 
 
-def _record_refusal(args: dict, state: _RunState) -> str | None:
-    """Rules checked in Python before recording (the model broke the first three in test runs)."""
+def _date_answered(date, answers: list[str]) -> bool:
+    """Whether this date is one she gave: a chosen option ("2026-05-29 (מומלץ)") or a typed date."""
+    return isinstance(date, str) and any(date in a or tools.normalize_answer(a, "date") == date for a in answers)
+
+
+def _amount_answered(amount, answers: list[str]) -> bool:
+    """Whether this amount is one she gave: a chosen option ("640 ₪ – נכון") or a typed number."""
+    if not isinstance(amount, (int, float)):
+        return False
+    said = [float(n.replace(",", "")) for a in answers for n in re.findall(r"\d[\d,]*(?:\.\d+)?", a)]
+    return any(abs(abs(amount) - n) <= config.AMOUNT_TOLERANCE for n in said)
+
+
+def _record_refusal(args: dict, state: _RunState) -> tuple[str, str] | None:
+    """Rules checked in Python before recording (the model broke the first three in test runs).
+
+    Returns (error for the model - what to do next, notice for her - one line in her words), or None.
+    """
     file = args.get("source_file")
     if not isinstance(file, str):
         return None
     answers = state.answers.get(file, [])
+    if copy_of := tools.recorded_copy(file):
+        return (f"הקובץ '{file}' זהה בדיוק לקובץ של {copy_of} – זה אותו מסמך. יש לדלג עליו "
+                f"(skip_document, סיבה: 'כפילות של {copy_of}') בלי לשאול",
+                f"הרישום נעצר: זה אותו קובץ בדיוק כמו {copy_of}")
+    if file in state.maybe_same and not answers:
+        return ("ייתכן שזו אותה קבלה כמו תנועה רשומה (אותו עסק ואותו תאריך, סכום אחר) – יש לשאול את המשתמשת "
+                "(ask_user עם file, האפשרויות 'כן, אותה קבלה (לא לרשום)' ו-'לא, קבלה נפרדת')",
+                "הרישום נעצר: קודם שאלה אם זו אותה קבלה")
+    # A test run: two warnings (handwritten amount and year), one question about the amount, and the
+    # model chose the date itself - each value she must confirm has to come from her answers
+    needed = state.confirm.get(file, [])
+    if "date" in needed and not _date_answered(args.get("date"), answers):
+        return ("השנה בתאריך לא ודאית – יש לשאול את המשתמשת על התאריך (ask_user עם file, answer_type 'date', "
+                "התאריך הסביר ראשון עם ' (מומלץ)') ולרשום את התאריך שבחרה",
+                "הרישום נעצר: קודם שאלה על התאריך")
+    if "amount" in needed and not _amount_answered(args.get("amount"), answers):
+        return ("הסכום כתוב ביד – יש לשאול את המשתמשת על הסכום (ask_user עם file, answer_type 'amount', "
+                "האפשרות '<סכום> ₪ – נכון') ולרשום את הסכום שאישרה",
+                "הרישום נעצר: קודם שאלה על הסכום")
+    # A test run skipped find_duplicate and recorded a receipt twice - the prompt alone is not enough
+    amount = args.get("amount")
+    if isinstance(amount, (int, float)) and (args.get("date"), round(amount, 2)) not in state.duplicate_checked:
+        return ("לפני הרישום יש לבדוק כפילות: find_duplicate עם אותו תאריך, סכום, source_file ו-tax_id",
+                "הרישום נעצר: קודם בודקים שהמסמך לא נרשם כבר")
     if file in state.warned and not answers:
         return (f"בקריאת '{file}' היו אזהרות – יש לשאול את המשתמשת על הקובץ הזה "
-                "(ask_user עם file) לפני הרישום")
+                "(ask_user עם file) לפני הרישום",
+                "הרישום נעצר: היו אזהרות בקריאה, ולכן קודם שאלה")
     # The prompt said "ask if not obvious", yet the model was always sure: "שוקי פרר" (no items) became
     # leisure, a travel agency became studies. Now it must point to a word in the document; asked at
     # most once per business - after it is recorded, memory knows its category.
     # Her answers count: a category she chose, or a business name she typed (evidence may come from it)
     chose_category = any(str(args.get("category")) in a for a in answers)
     if file in state.evidence_text and not chose_category             and not _evidence_found(args.get("category_evidence"), state.evidence_text[file] + answers):
-        return (f"אין במסמך ראיה לקטגוריה '{args.get('category')}' (category_evidence חייב להיות מילה מתוך שם העסק "
-                "או מפריט) – יש לשאול את המשתמשת (ask_user עם file ו-2-4 קטגוריות, הניחוש שלך ראשון עם ' (מומלץ)')")
+        # A test run: a fish store was refused for a missing category_evidence and the model asked her
+        # instead of sending the word "דגים" - the error now sends it back to look for the word first
+        return (f"לא נמצאה ראיה לקטגוריה '{args.get('category')}': category_evidence חייב להיות מילה שמופיעה בשם "
+                "העסק או בפריט ומראה את הקטגוריה. אם יש מילה כזו – לקרוא שוב ל-add_transaction עם המילה "
+                "ב-category_evidence. רק אם אין – לשאול את המשתמשת (ask_user עם file ו-2-4 קטגוריות, "
+                "הניחוש שלך ראשון עם ' (מומלץ)')",
+                "הרישום נעצר: הקטגוריה צריכה להתבסס על מילה מהמסמך")
     # A document in dollars: the ₪ amount from read_document must be recorded, not the printed one
     converted = state.converted.get(file)
-    amount = args.get("amount")
     if converted and isinstance(amount, (int, float)) and converted["original"]["total"] is not None \
             and abs(abs(amount) - abs(converted["original"]["total"])) <= config.AMOUNT_TOLERANCE:
         original = converted["original"]
         return (f"הסכום {amount} הוא ב-{original['currency']}. יש לרשום בשקלים: {converted['total']} "
-                f"(לפי שער {original['rate']})")
+                f"(לפי שער {original['rate']})",
+                f"הרישום נעצר: הסכום היה ב-{original['currency']}, צריך לרשום בשקלים")
     if args.get("category") == "אחר" and not any("אחר" in a for a in answers):
         return ("'אחר' רק אם המשתמשת בחרה בו – יש לשאול אותה על הקטגוריה (ask_user עם file "
-                "ו-2-4 קטגוריות אפשריות)")
+                "ו-2-4 קטגוריות אפשריות)",
+                "הרישום נעצר: 'אחר' רק אם בחרת בו")
     return None
 
 
@@ -332,8 +414,10 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
         return {"ok": False, "error": f"הפרמטרים של {name} חייבים להיות אובייקט"}
     # A run showed an empty summary of a month with nothing recorded - refused before she sees it
     if name == "get_monthly_summary" and args.get("month") not in _wanted_summaries(state):
-        return {"ok": False, "error": "אין צורך בסיכום של החודש הזה – רק החודש הנוכחי וחודשים אחרונים "
-                                      f"שנרשם בהם משהו בריצה הזו: {', '.join(sorted(_wanted_summaries(state)))}"}
+        # "hidden": the refusal is for the model only - she would see a red error about a summary she never asked for
+        return {"ok": False, "hidden": True,
+                "error": "אין צורך בסיכום של החודש הזה – רק החודש הנוכחי וחודשים אחרונים "
+                         f"שנרשם בהם משהו בריצה הזו: {', '.join(sorted(_wanted_summaries(state)))}"}
     ui.tool_call(name, args)
 
     if name == "ask_user":
@@ -343,7 +427,15 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
         file = args.get("file") if isinstance(args.get("file"), str) else None
         if file in state.documents:
             question = f"מסמך: {state.documents[file]}\n\n{question}"
-        answer = ui.ask(question, args.get("options"))
+        answer_type = args.get("answer_type") if args.get("answer_type") in ("date", "amount") else "text"
+        options = [o for o in (args.get("options") or []) if isinstance(o, str) and o.strip()]
+        answer = ui.ask(question, options, answer_type)
+        # The screen accepts only a valid date / amount; checked here too, for any UI. An option
+        # (e.g. "לא לרשום") is taken as is.
+        if answer and answer_type != "text" and answer not in options:
+            answer = tools.normalize_answer(answer, answer_type)
+            if answer is None:
+                return {"ok": True, "answer": "", "note": "התשובה לא הייתה תאריך / סכום תקין"}
         if not answer:
             return {"ok": True, "answer": "", "note": "המשתמשת לא ענתה"}
         if file:
@@ -351,7 +443,7 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
         return {"ok": True, "answer": answer}
 
     if name == "add_transaction" and (refusal := _record_refusal(args, state)):
-        return {"ok": False, "error": refusal}
+        return {"ok": False, "error": refusal[0], "notice": refusal[1]}
     if name == "add_transaction":
         args = {k: v for k, v in args.items() if k != "category_evidence"}  # checked above, not saved
     if name == "add_transaction" and (converted := state.converted.get(args.get("source_file"))):
@@ -364,10 +456,25 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
         result = function(**args)
     except TypeError as e:  # missing or unknown parameter name
         return {"ok": False, "error": f"פרמטרים שגויים ל-{name}: {e}"}
+    if name == "find_duplicate" and result.get("ok") and isinstance(args.get("amount"), (int, float)):
+        state.duplicate_checked.add((args.get("date"), round(args["amount"], 2)))
+        if any(c["matched_by"] == "same_business_and_date" for c in result["candidates"]):
+            state.maybe_same.add(args.get("source_file"))
+    if name == "list_documents" and result.get("ok"):
+        # An exact copy of a recorded file is skipped by Python, once - no reading, no question
+        for document in result["documents"]:
+            if document.get("copy_of") and "skipped" not in document:
+                tools.skip_document(document["file"], f"עותק של {document['copy_of']}")
+                document["skipped"] = f"עותק של {document['copy_of']}"
+                state.copies.append(f"{document['file']} (עותק של {document['copy_of']}, שכבר רשום)")
+                result.setdefault("copies_now", []).append(document)
+        result["new_count"] = sum(not d["already_recorded"] and "skipped" not in d for d in result["documents"])
     if name == "read_document" and result.get("ok"):
         state.documents[result["file"]] = _describe_document(result)
         if result.get("warnings"):
             state.warned.add(result["file"])
+        if result.get("confirm"):
+            state.confirm[result["file"]] = result["confirm"]
         if result.get("document_type") in ("receipt", "refund") and not result.get("known_business"):
             names = [result.get("business"), result.get("business_printed")] + [i["name"] for i in result.get("items", [])]
             state.evidence_text[result["file"]] = [n for n in names if n]
@@ -416,9 +523,12 @@ def _progress_report(recorded: int) -> str:
 
 
 def _wanted_summaries(state: _RunState) -> set[str]:
-    """The current month, and the recent months in which something was recorded in this run."""
-    recent = _recent_months()
-    return {recent[0]} | (state.recorded_months & set(recent))
+    """The months in which something was recorded in this run (any year); none if nothing was.
+
+    Her choice (a test run recorded a 2022 receipt and then showed October 2026): the summary is
+    about what was just added.
+    """
+    return set(state.recorded_months)
 
 
 def _show_missing_summaries(ui: AgentUI, state: _RunState) -> None:
@@ -427,15 +537,29 @@ def _show_missing_summaries(ui: AgentUI, state: _RunState) -> None:
         summary = tools.get_monthly_summary(month)
         if summary.get("ok"):
             ui.show_summary(summary)
+            state.summaries[month] = summary
+
+
+def _nothing_new_message(state: _RunState) -> str:
+    """The final message of a run that recorded and skipped nothing - written by Python."""
+    if state.copies:  # she did upload a file - say what it is first
+        return "\n".join(f"הקובץ {c} – לכן לא נרשם שוב." for c in state.copies)
+    return "אין מסמכים חדשים בתיבה – לא נרשם דבר."
 
 
 def _run_facts(state: _RunState) -> str:
     """The exact numbers of this run - from Python, not the model (a test run said 8 when 11 were recorded)."""
-    text = f"נרשמו בריצה הזו: {state.recorded}"
-    if state.skipped:
-        text += f" · דולגו: {state.skipped}"
-    if older := sorted(state.recorded_months - set(_recent_months())):
-        text += "\nנרשמו גם מסמכים מחודשים קודמים (בלי טבלת סיכום): " + ", ".join(older)
+    # The count only when more than one document was handled - for one, the model's sentence already says it
+    text = ""
+    if state.recorded + state.skipped > 1:
+        text = f"נרשמו בריצה הזו: {state.recorded}" + (f" · דולגו: {state.skipped}" if state.skipped else "")
+    # Budgets from Python, only where something was recorded now (the model mentioned an old
+    # clothing overrun after recording a lesson)
+    for month, summary in sorted(state.summaries.items()):
+        for budget in summary.get("budgets", []):
+            if budget["status"] in ("near", "over") and (month, budget["category"]) in state.recorded_categories:
+                label = "חריגה מהתקציב" if budget["status"] == "over" else "קרוב לתקציב"
+                text += f"\n{label}: {budget['category']} ({budget['percent']}% ב-{month[5:]}/{month[:4]})"
     # A safety net: in run 2 the model forgot documents she had approved
     if left := _not_handled():
         text += "\nקבצים שלא נרשמו ולא דולגו (לבדוק): " + ", ".join(left)
@@ -478,20 +602,33 @@ def _loop(ui: AgentUI, state: _RunState) -> None:
                     "כתוב זאת בהודעת הסיום.")})
                 continue
             _show_missing_summaries(ui, state)
-            ui.final((message.content or "סיימתי.") + "\n\n" + _run_facts(state))
+            facts = _run_facts(state).strip()
+            if state.recorded or state.skipped:
+                ui.final((message.content or "סיימתי.") + (f"\n\n{facts}" if facts else ""))
+            else:
+                # Nothing new: a test run's model then described every older document as if just recorded
+                ui.final(_nothing_new_message(state) + (f"\n\n{facts}" if facts else ""))
             return
 
-        ui.thinking(message.content or "")
+        if any(_is_decision(call, state) for call in message.tool_calls):
+            ui.thinking(message.content or "")
         for call in message.tool_calls:
             name = call.function.name
             result = _run_tool(name, call.function.arguments, ui, state)
-            ui.tool_result(name, result)
+            notice = result.pop("notice", None)
+            if notice:
+                ui.guard(notice)
+            elif not result.pop("hidden", False):
+                ui.tool_result(name, result)
             if result.get("ok") and name == "get_monthly_summary":
                 ui.show_summary(result)
                 state.summarized.add(result["month"])
+                state.summaries[result["month"]] = result
             if result.get("ok") and name == "add_transaction":
                 state.recorded += 1
                 state.recorded_months.add(result["transaction"]["date"][:7])
+                if result["transaction"]["type"] == "expense":
+                    state.recorded_categories.add((result["transaction"]["date"][:7], result["transaction"]["category"]))
             if result.get("ok") and name == "skip_document":
                 state.skipped += 1
             messages.append({

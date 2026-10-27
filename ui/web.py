@@ -46,6 +46,9 @@ class WebUI(AgentUI):
         if name != "ask_user":  # the question itself is shown by ask()
             self._emit({"type": "tool_call", "name": name, "args": args})
 
+    def guard(self, text: str) -> None:
+        self._emit({"type": "guard", "text": text})
+
     def tool_result(self, name: str, result: dict) -> None:
         if not result.get("ok"):
             self._emit({"type": "tool_result", "name": name, "ok": False,
@@ -59,9 +62,9 @@ class WebUI(AgentUI):
             event["transaction"] = result["transaction"]
         self._emit(event)
 
-    def ask(self, question: str, options: list[str] | None = None) -> str:
+    def ask(self, question: str, options: list[str] | None = None, answer_type: str = "text") -> str:
         options = [o for o in (options or []) if isinstance(o, str) and o.strip()]
-        self._emit({"type": "ask", "question": question, "options": options})
+        self._emit({"type": "ask", "question": question, "options": options, "answer_type": answer_type})
         answer = self._answers.get()
         if answer is None:
             raise BrowserGone("הדפדפן נסגר")

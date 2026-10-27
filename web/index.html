@@ -37,6 +37,7 @@
       <article class="kpi kpi-income">
         <span class="kpi-label">הכנסות</span>
         <strong class="kpi-value" id="kpiIncome">—</strong>
+        <span class="kpi-sub" id="kpiIncomeNote" hidden>לא הועלה תלוש לחודש הזה</span>
       </article>
       <article class="kpi kpi-expense">
         <span class="kpi-label">הוצאות</span>
@@ -58,14 +59,15 @@
           </div>
 
           <label class="dropzone" id="dropzone">
-            <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" hidden>
+            <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" hidden>
             <div class="dz-empty" id="dzEmpty">
               <div class="dz-icon">⬆</div>
               <strong>גררי לכאן צילום של קבלה, חשבון או תלוש</strong>
-              <span>או לחצי לבחירת קובץ · JPG, PNG, WEBP</span>
+              <span>או לחצי לבחירת קובץ · JPG, PNG, WEBP, PDF</span>
             </div>
             <div class="dz-preview" id="dzPreview" hidden>
               <img id="previewImg" alt="תצוגה מקדימה של המסמך">
+              <div class="pdf-thumb" id="previewPdf" hidden>PDF</div>
               <div class="dz-file">
                 <strong id="previewName"></strong>
                 <span id="previewSize"></span>
