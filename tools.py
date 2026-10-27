@@ -25,6 +25,7 @@ import urllib.request
 from datetime import date as calendar_date, datetime, timedelta
 
 import openai
+from PIL import Image
 
 import config
 import storage
@@ -264,9 +265,73 @@ def _openai_client() -> openai.OpenAI:
     return openai.OpenAI(timeout=config.READ_TIMEOUT_SECONDS)
 
 
-def _ask_model_to_read(path) -> dict:
+_ROTATION_PROMPT = """This is a photo of a receipt or another document. By how many degrees must the
+photo be turned CLOCKWISE so that its text reads normally, upright (0 if it is already upright)?"""
+_ROTATION_SCHEMA = {
+    "type": "object",
+    "properties": {"rotation": {"type": "integer", "enum": [0, 90, 180, 270]}},
+    "required": ["rotation"],
+    "additionalProperties": False,
+}
+
+
+def _text_rotation(image: Image.Image) -> int:
+    """Degrees to turn the image clockwise so its text is upright. Raises on API problems."""
+    small = image.convert("RGB")
+    small.thumbnail((config.ROTATION_CHECK_PIXELS, config.ROTATION_CHECK_PIXELS))
+    buffer = io.BytesIO()
+    small.save(buffer, format="JPEG", quality=85)  # without EXIF: the model sees the pixels that are turned
+    data_url = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    response = _openai_client().chat.completions.create(
+        model=config.READ_MODEL,
+        reasoning_effort=config.ROTATION_REASONING_EFFORT,
+        response_format={"type": "json_schema",
+                         "json_schema": {"name": "rotation", "schema": _ROTATION_SCHEMA, "strict": True}},
+        messages=[
+            {"role": "system", "content": _ROTATION_PROMPT},
+            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url, "detail": "low"}}]},
+        ],
+    )
+    return json.loads(response.choices[0].message.content)["rotation"]
+
+
+def _upright_content(path) -> bytes:
+    """The file's bytes, turned upright first if it is a landscape photo whose text lies sideways.
+
+    Portrait photos and PDFs are sent exactly as before. A landscape photo is not always sideways
+    (a test water bill was photographed landscape and upright), so the model is asked - and its
+    answer is cached like a reading. Unchanged bytes keep their old read-cache entries.
+    """
+    content = path.read_bytes()
+    if path.suffix.lower() == ".pdf":
+        return content
+    try:
+        image = Image.open(io.BytesIO(content))
+        image.load()
+    except OSError:  # not an image Pillow knows - the model gets it as is and says if it cannot read it
+        return content
+    if image.width <= image.height:
+        return content
+    key = "rotation|" + hashlib.sha256(content).hexdigest() + f"|{config.READ_MODEL}|{_ROTATION_PROMPT}"
+    cache = storage.load_read_cache() if config.USE_READ_CACHE else {}
+    if key not in cache:
+        try:
+            cache[key] = _text_rotation(image)
+        except (ValueError, TypeError, KeyError):  # a refusal or an odd answer - read it as it is
+            return content
+        if config.USE_READ_CACHE:
+            storage.save_read_cache(cache)
+    if cache[key] == 0:
+        return content
+    buffer = io.BytesIO()
+    # rotate() turns counterclockwise; quality is ignored by formats without it (PNG)
+    image.rotate(-cache[key], expand=True).save(buffer, format=image.format or "PNG", quality=95)
+    return buffer.getvalue()
+
+
+def _ask_model_to_read(path, content: bytes) -> dict:
     """Send the image (or PDF) to the model and return its parsed reply. Raises on API problems."""
-    file_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+    file_b64 = base64.b64encode(content).decode("ascii")
     data_url = f"data:{_MIME_TYPES[path.suffix.lower()]};base64,{file_b64}"
     if path.suffix.lower() == ".pdf":
         document_part = {"type": "file", "file": {"filename": path.name, "file_data": data_url}}
@@ -300,14 +365,15 @@ def _cached_reading(path) -> dict:
     plus the prompt and the model, so changing the prompt never reuses old readings.
     Only the raw reading is cached; the checks in _check_reading run again every time.
     """
+    content = _upright_content(path)
     if not config.USE_READ_CACHE:
-        return _ask_model_to_read(path)
-    fingerprint = hashlib.sha256(path.read_bytes())
+        return _ask_model_to_read(path, content)
+    fingerprint = hashlib.sha256(content)
     fingerprint.update(f"{config.READ_MODEL}|{config.READ_REASONING_EFFORT}|{READ_PROMPT}|{json.dumps(READ_SCHEMA)}".encode())
     key = fingerprint.hexdigest()
     cache = storage.load_read_cache()
     if key not in cache:
-        cache[key] = _ask_model_to_read(path)
+        cache[key] = _ask_model_to_read(path, content)
         storage.save_read_cache(cache)
     return copy.deepcopy(cache[key])  # _check_reading changes the reading it gets
 
@@ -597,7 +663,7 @@ def _with_familiar_name(printed: str | None, legal: str) -> str:
 
 
 def _apply_registry_name(reading: dict, warnings: list[str], info: list[str]) -> str | None:
-    """Add the company's legal name to the name read from the image. Returns the name to record, or None.
+    """Add the company's legal name to the name read from the image. Returns the legal name, or None.
 
     The legal name is trusted over the photo - a misread one ("שוקי פרר" instead of "שוקי פון") is
     replaced; a brand ("אושר עד") is kept beside it (see _with_familiar_name).
@@ -620,7 +686,7 @@ def _apply_registry_name(reading: dict, warnings: list[str], info: list[str]) ->
         info.append(f"השם לפי רשם החברות (ח.פ. {tax_id}): {name}. מהתמונה נקרא: {reading['business_printed'] or 'שום שם'}")
     if _MISSING_BUSINESS in warnings:
         warnings.remove(_MISSING_BUSINESS)
-    return reading["business"]
+    return name
 
 
 def read_document(file: str) -> dict:
@@ -660,10 +726,13 @@ def read_document(file: str) -> dict:
         return _error(f"{reason}. התמונה לא ברורה – צריך לצלם אותה שוב")
 
     warnings, info = _check_reading(reading)
-    registry_name = _apply_registry_name(reading, warnings, info)
+    legal_name = _apply_registry_name(reading, warnings, info)
     known = _known_business(reading["tax_id"], reading["business"])
-    if known and registry_name:  # memory keeps the category; the name may be an earlier misreading or legal name only
-        known["business"] = registry_name
+    # Memory's name wins (the first recording, or her ✏️ fix): a real run read an אושר עד receipt as
+    # "מגה בעיר", which would have replaced it. Only a name without the legal one in it is replaced -
+    # it is from before the registry check and may itself be a misreading ("שוקי פרר").
+    if known and legal_name and _name_letters(legal_name) not in _name_letters(known["business"]):
+        known["business"] = reading["business"]
     if known and reading["business"] is None:  # the number identified it although the name was not read
         reading["business"] = known["business"]
         warnings.remove(_MISSING_BUSINESS)

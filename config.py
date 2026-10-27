@@ -48,6 +48,10 @@ READ_TIMEOUT_SECONDS = 90
 # year fall within this many days before today, the agent asks. Other old documents are not
 # questioned - in run 2 all three "old date" questions were about dates that were read correctly.
 YEAR_MISREAD_DAYS = 90
+# A landscape photo may hold a receipt lying sideways (a real run: no date found, a wrong store name;
+# turned upright, both were read). The model is first asked how far to turn it, on a small copy.
+ROTATION_REASONING_EFFORT = "low"
+ROTATION_CHECK_PIXELS = 1024
 # Cross-checks (items vs total, payments vs total) allow this much difference (₪) for rounding.
 AMOUNT_TOLERANCE = 0.5
 # Some receipts list item prices before VAT (a test receipt: 119.49 + 18% = 141.00).
