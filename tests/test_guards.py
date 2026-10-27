@@ -58,6 +58,29 @@ def test_other_category_only_if_she_chose_it(add_file):
     assert run_tool("add_transaction", transaction(file, category="אחר"), state)["ok"]
 
 
+def test_new_business_needs_a_word_from_the_document(add_file):
+    # Check 6: the model was always "sure" - a phone shop was recorded as leisure
+    state = agent._RunState()
+    file = add_file("03.jpeg")
+    state.evidence_text[file] = ["H&M", "Jacket Brown, XX", "Bags"]
+    run_tool("find_duplicate", {"date": "2026-09-09", "amount": 370.6, "source_file": file}, state)
+    clothing = transaction(file, category="ביגוד והנעלה", business="H&M")
+
+    refused = run_tool("add_transaction", clothing, state)
+    assert not refused["ok"] and "Jacket Brown" in refused["error"]  # the refusal shows the document's words
+    assert not run_tool("add_transaction", {**clothing, "category_evidence": "חולצה"}, state)["ok"]  # not in it
+    assert run_tool("add_transaction", {**clothing, "category_evidence": "Jacket"}, state)["ok"]
+
+
+def test_her_category_answer_is_enough(add_file):
+    state = agent._RunState()
+    file = add_file("03.jpeg")
+    state.evidence_text[file] = ["H&M"]
+    run_tool("find_duplicate", {"date": "2026-09-09", "amount": 370.6, "source_file": file}, state)
+    run_tool("ask_user", {"question": "איזו קטגוריה?", "file": file}, state, FakeUI("ביגוד והנעלה (מומלץ)"))
+    assert run_tool("add_transaction", transaction(file, category="ביגוד והנעלה", business="H&M"), state)["ok"]
+
+
 def test_a_receipt_is_never_income(add_file):
     state = agent._RunState()
     file = add_file("05.jpg")
