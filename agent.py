@@ -79,6 +79,9 @@ RULES
   and why recording it may be wrong (e.g. an invoice is a demand for payment - the expense is
   recorded from the receipt when she pays, so recording both counts it twice; mention it if this
   business is already known). Options e.g. "לא לרשום – אעלה את הקבלה כשאשלם" / "לרשום בכל זאת".
+- Something she RECEIVED (a gift voucher, a gift card, a prize, cashback) is income in category
+  "מתנות והטבות" - never an expense: no money left her. Ask whether to record it, options e.g.
+  "לרשום כהכנסה" / "לא לרשום". A purchase later paid with it is a normal expense, so the two cancel out.
 - Known business: if read_document returns "known_business", this business was recorded before
   (matched by its business number, or by its name) - record it with that business name and category,
   without asking. Pass the document's tax_id to add_transaction.

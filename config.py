@@ -96,6 +96,7 @@ EXPENSE_CATEGORIES = [
 
 INCOME_CATEGORIES = [
     "משכורת",
+    "מתנות והטבות",  # a gift voucher or gift card she received; spending it is a normal expense, so they cancel out
     "אחר",
 ]
 
