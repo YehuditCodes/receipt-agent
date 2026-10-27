@@ -100,6 +100,9 @@ class TerminalUI(AgentUI):
                 value = value[:_MAX_ARG_LENGTH] + "…"
             shown.append(f"{key}={value}")
         self._line(f"→ {name}({', '.join(shown)})", "cyan")
+        # Reading takes 20-60 s with no output: in a clean-install test she took it for stuck and pressed Ctrl+C
+        if name == "read_document":
+            self._line("  קורא את המסמך... (עד דקה)", "dim")
 
     def tool_result(self, name: str, result: dict) -> None:
         if not result.get("ok"):
