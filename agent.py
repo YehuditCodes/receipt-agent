@@ -95,9 +95,10 @@ RULES
   נכסים והשקעות בע"מ" with the item "שיעור פסנתר" is a lesson, not housing. Use the category
   descriptions below. Choose without asking only if the document itself shows it: then pass
   category_evidence - a word copied exactly from the business name or an item name that shows the
-  category (e.g. "פון" in "שוקי פון" -> electronics, "חלב" in the items -> food). Who the document is
-  addressed to is not evidence. No such word, or the name and the items point to different
-  categories -> ask (add_transaction refuses a new business without evidence found in the document).
+  category (e.g. "פון" in "שוקי פון" -> electronics, "חלב" in the items -> food; any language
+  counts - "Milk" in an English item -> food). Who the document is addressed to is not evidence.
+  No such word, or the name and the items point to different categories -> ask (add_transaction
+  refuses a new business without evidence found in the document).
   When you ask, offer 2-4 likely categories, your best guess first with " (מומלץ)" after it (record
   the category without that mark). "אחר" is not a way to avoid asking - add_transaction refuses
   "אחר" unless she chose it for that file.
@@ -410,7 +411,9 @@ def _record_refusal(args: dict, state: _RunState) -> tuple[str, str] | None:
         # A test run: a fish store was refused for a missing category_evidence and the model asked her
         # instead of sending the word "דגים" - the error now sends it back to look for the word first
         return (f"לא נמצאה ראיה לקטגוריה '{args.get('category')}': category_evidence חייב להיות מילה שמופיעה בשם "
-                "העסק או בפריט ומראה את הקטגוריה. אם יש מילה כזו – לקרוא שוב ל-add_transaction עם המילה "
+                "העסק או בפריט ומראה את הקטגוריה, בכל שפה (גם מילה באנגלית בשם פריט). השם והפריטים במסמך: "
+                f"{' | '.join(state.evidence_text[file])}. אם יש ביניהם מילה כזו – "
+                "לקרוא שוב ל-add_transaction עם המילה "
                 "ב-category_evidence. רק אם אין – לשאול את המשתמשת (ask_user עם file ו-2-4 קטגוריות, "
                 "הניחוש שלך ראשון עם ' (מומלץ)')",
                 "הרישום נעצר: הקטגוריה צריכה להתבסס על מילה מהמסמך")
