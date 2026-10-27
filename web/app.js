@@ -226,6 +226,8 @@ function renderTable(transactions) {
     const row = el("tr", state.newIds.has(t.id) ? "new" : "");
     const business = el("td", "biz", t.business);
     if (t.items && t.items.length) business.append(el("span", "items", t.items.slice(0, 4).join(" · ")));
+    // Converted from a foreign currency: show what the document said and the rate used
+    if (t.original) business.append(el("span", "items", `${t.original.total} ${t.original.currency} × ${t.original.rate} (שער יציג)`));
     const chip = el("span", "chip");
     const dot = el("span", "dot");
     dot.style.background = t.type === "income" ? cssVar("--income") : categoryColor(t.category);
