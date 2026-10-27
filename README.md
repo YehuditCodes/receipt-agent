@@ -14,26 +14,36 @@
 
 ## התקנה והרצה
 
-**דרישות:** Python 3.12 ומפתח API של OpenAI.
+**דרישות:** Python 3.12 ומפתח API של OpenAI. המפתח לא נמצא ב-repo – כל אחד משתמש במפתח שלו. עלות: בערך סנט אחד למסמך.
 
-```powershell
-# 0. הורדת הפרויקט
+**1. הורדת הפרויקט**
+```
 git clone https://github.com/YehuditCodes/receipt-agent.git
 cd receipt-agent
+```
 
-# 1. סביבה וספריות
+**2. סביבה וספריות**
+```
 python -m venv .venv
-.venv\Scripts\activate            # Mac/Linux: source .venv/bin/activate
+.venv\Scripts\activate
 pip install -r requirements.txt
+```
+ב-Mac/Linux, במקום השורה השנייה: `source .venv/bin/activate`
 
-# 2. מפתח API: במשתנה סביבה, לא בקוד
-setx OPENAI_API_KEY "sk-..."      # Mac/Linux: export OPENAI_API_KEY="sk-..."
-# אחרי setx צריך לפתוח טרמינל חדש
+**3. מפתח API** – במשתנה סביבה, לא בקוד:
+```
+setx OPENAI_API_KEY "sk-..."
+```
+במקום `sk-...` שמים את המפתח. אחרי `setx` צריך לפתוח טרמינל חדש. ב-Mac/Linux: `export OPENAI_API_KEY="sk-..."`
 
-# 3. הרצה בדפדפן (מומלץ) – נפתח http://127.0.0.1:8000 ומעלים שם קבלות
+**4. הרצה בדפדפן (מומלץ)**
+```
 python web_app.py
+```
+נפתח http://127.0.0.1:8000, ושם מעלים קבלות.
 
-# או בטרמינל – על הקבצים שבתיקייה inbox/  (jpg, jpeg, png, webp, pdf)
+או בטרמינל, על הקבצים שבתיקייה `inbox/` (jpg, jpeg, png, webp, pdf):
+```
 python main.py
 ```
 
@@ -43,7 +53,7 @@ python main.py
 - **ריצה חוזרת ממשיכה מאיפה שעצרה:** מה שכבר נרשם או דולג לא מטופל שוב, גם אם אותו קובץ הועלה שוב בשם אחר.
 - הנתונים נשמרים מקומית בתיקייה `data/`: `transactions.json` (התנועות), `memory.json` (עסקים שנלמדו), `skipped.json` (מסמכים שהוחלט לא לרשום) ו-`read_cache.json` (קריאות של תמונות, כדי לא לשלם פעמיים על אותה תמונה). `data/` ו-`inbox/` לא עולות ל-GitHub, כי יש בהן פרטים אישיים.
 - קטגוריות, תקציבים, מודלים ומגבלות מוגדרים כולם ב-`config.py`.
-- עלות: בערך סנט אחד למסמך. מסמך שכבר נקרא לא עולה שוב.
+- מסמך שכבר נקרא לא עולה שוב כסף: הקריאה נשמרת ב-`read_cache.json`.
 
 ---
 
