@@ -268,6 +268,7 @@ class _RunState:
     # file -> the names read from a document of an unknown business (category evidence must be in them)
     evidence_text: dict[str, list[str]] = field(default_factory=dict)
     converted: dict[str, dict] = field(default_factory=dict)  # file -> {"total" in ₪, "original": ...}
+    full_names: dict[str, str] = field(default_factory=dict)  # file -> business name with its legal name
     answers: dict[str, list[str]] = field(default_factory=dict)  # file -> her answers about it
     documents: dict[str, str] = field(default_factory=dict)  # file -> "business · date · amount"
     duplicate_checked: set[tuple] = field(default_factory=set)  # (date, amount) passed to find_duplicate
@@ -454,6 +455,12 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
         return {"ok": False, "error": refusal[0], "notice": refusal[1]}
     if name == "add_transaction":
         args = {k: v for k, v in args.items() if k != "category_evidence"}  # checked above, not saved
+    # A real run: read_document gave "אושר עד גבעת שאול (מרב - מזון כל בע"מ)" and the model recorded
+    # only "אושר עד גבעת שאול". A shortened name gets its full form back; a different one (her answer) stays.
+    full_name = state.full_names.get(args.get("source_file"))
+    if name == "add_transaction" and full_name and isinstance(args.get("business"), str) \
+            and args["business"].strip() and args["business"].strip() in full_name:
+        args = {**args, "business": full_name}
     if name == "add_transaction" and (converted := state.converted.get(args.get("source_file"))):
         args = {**args, "original": converted["original"]}  # kept in the transaction, not the model's job
 
@@ -488,6 +495,8 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
             state.evidence_text[result["file"]] = [n for n in names if n]
         if result.get("original"):
             state.converted[result["file"]] = {"total": result["total"], "original": result["original"]}
+        if result.get("business_printed") or result.get("known_business"):
+            state.full_names[result["file"]] = (result.get("known_business") or {}).get("business") or result["business"]
     return result
 
 
