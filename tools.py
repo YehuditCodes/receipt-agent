@@ -12,6 +12,7 @@ file) is raised, because then the agent must stop.
 import base64
 import copy
 import csv
+import difflib
 import functools
 import hashlib
 import io
@@ -578,11 +579,28 @@ def _registry_name(tax_id: str) -> str | None:
     return re.sub(r"\bבעמ$", 'בע"מ', name) or None
 
 
-def _apply_registry_name(reading: dict, warnings: list[str], info: list[str]) -> str | None:
-    """Replace the name read from the image with the company's legal name. Returns that name, or None.
+def _name_letters(text: str | None) -> str:
+    return re.sub(r"[\s\"'׳״`-]", "", text or "")
 
-    Her decision: the legal name even when the receipt shows a brand (H&M -> "מאצ' ריטייל") -
-    an unfamiliar but true name is better than a misread one ("שוקי פרר" instead of "שוקי פון").
+
+def _with_familiar_name(printed: str | None, legal: str) -> str:
+    """The name to record: "אושר עד (מרב - מזון כל בע"מ)" - the name people know, the legal one beside it.
+
+    Her request: the legal name alone was unfamiliar (H&M -> "מאצ' ריטייל"). A printed name close to
+    the legal one is probably a misreading of it ("שוקי פרר" / "שוקי פון בע"מ") - then the legal name alone.
+    """
+    printed_letters, legal_letters = _name_letters(printed), _name_letters(legal)
+    if not printed_letters or printed_letters in legal_letters \
+            or difflib.SequenceMatcher(None, printed_letters, legal_letters).ratio() >= 0.5:
+        return legal
+    return f"{printed} ({legal})"
+
+
+def _apply_registry_name(reading: dict, warnings: list[str], info: list[str]) -> str | None:
+    """Add the company's legal name to the name read from the image. Returns the name to record, or None.
+
+    The legal name is trusted over the photo - a misread one ("שוקי פרר" instead of "שוקי פון") is
+    replaced; a brand ("אושר עד") is kept beside it (see _with_familiar_name).
     """
     tax_id = reading["tax_id"]
     if not config.USE_ONLINE_LOOKUPS or not tax_id or not tax_id.startswith(("51", "52")):
@@ -594,17 +612,15 @@ def _apply_registry_name(reading: dict, warnings: list[str], info: list[str]) ->
         return None
     if name is None:
         return None
-    def letters(text):
-        return re.sub(r"[\s\"'׳״`-]", "", text or "")
-    if letters(name) == letters(reading["business"]):  # the same name, only spaces or quote marks differ
+    if _name_letters(name) == _name_letters(reading["business"]):  # the same name, only spaces or quote marks differ
         name = reading["business"]
     elif name != reading["business"]:
         reading["business_printed"] = reading["business"]
-        reading["business"] = name
+        reading["business"] = _with_familiar_name(reading["business"], name)
         info.append(f"השם לפי רשם החברות (ח.פ. {tax_id}): {name}. מהתמונה נקרא: {reading['business_printed'] or 'שום שם'}")
     if _MISSING_BUSINESS in warnings:
         warnings.remove(_MISSING_BUSINESS)
-    return name
+    return reading["business"]
 
 
 def read_document(file: str) -> dict:
@@ -646,7 +662,7 @@ def read_document(file: str) -> dict:
     warnings, info = _check_reading(reading)
     registry_name = _apply_registry_name(reading, warnings, info)
     known = _known_business(reading["tax_id"], reading["business"])
-    if known and registry_name:  # memory keeps the category; the name may be an earlier misreading
+    if known and registry_name:  # memory keeps the category; the name may be an earlier misreading or legal name only
         known["business"] = registry_name
     if known and reading["business"] is None:  # the number identified it although the name was not read
         reading["business"] = known["business"]

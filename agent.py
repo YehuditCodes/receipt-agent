@@ -82,9 +82,10 @@ RULES
 - Known business: if read_document returns "known_business", this business was recorded before
   (matched by its business number, or by its name) - record it with that business name and category,
   without asking. Pass the document's tax_id to add_transaction.
-- Registry name: if read_document returns "business_printed", the business name was replaced by the
-  company's legal name from the companies registry (found by its number). Record that legal name - it
-  is more reliable than a name read from a photo. It may also tell what kind of business it is.
+- Registry name: if read_document returns "business_printed", the business name was checked against
+  the companies registry (found by its number): "business" is the legal name, or the familiar name
+  with the legal name in brackets. Record "business" exactly as returned - it is more reliable than
+  a name read from a photo. It may also tell what kind of business it is.
 - Category: a known business (list below) gets its category without asking. Otherwise choose by
   WHAT WAS PAID FOR (the items / "עבור" line), not by words in a legal company name - e.g. "א.ג.
   נכסים והשקעות בע"מ" with the item "שיעור פסנתר" is a lesson, not housing. Use the category
@@ -381,7 +382,14 @@ def _record_refusal(args: dict, state: _RunState) -> tuple[str, str] | None:
     # most once per business - after it is recorded, memory knows its category.
     # Her answers count: a category she chose, or a business name she typed (evidence may come from it)
     chose_category = any(str(args.get("category")) in a for a in answers)
-    if file in state.evidence_text and not chose_category             and not _evidence_found(args.get("category_evidence"), state.evidence_text[file] + answers):
+    if file in state.evidence_text and not chose_category \
+            and not _evidence_found(args.get("category_evidence"), state.evidence_text[file] + answers):
+        # A real run: she answered "רכב", the model recorded תחבורה without category_evidence and was
+        # refused - then asked her the same question again. Her answer is the evidence; never re-ask.
+        if answers:
+            return (f"המשתמשת כבר ענתה על המסמך הזה ({' | '.join(answers)}). אין לשאול אותה שוב: יש לקרוא "
+                    "שוב ל-add_transaction עם מילה מהתשובה שלה ב-category_evidence",
+                    "הרישום נעצר: חסרה ראיה לקטגוריה, התשובה שלך תשמש כראיה")
         # A test run: a fish store was refused for a missing category_evidence and the model asked her
         # instead of sending the word "דגים" - the error now sends it back to look for the word first
         return (f"לא נמצאה ראיה לקטגוריה '{args.get('category')}': category_evidence חייב להיות מילה שמופיעה בשם "
