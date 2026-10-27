@@ -120,10 +120,10 @@ CATEGORY_DESCRIPTIONS = {
 # --- Monthly budgets (₪) ---
 # Only for flexible spending; fixed costs (rent, bills) get no budget warning.
 BUDGETS = {
-    "מזון וקניות": 2000,
-    "מסעדות ובתי קפה": 500,
-    "ביגוד והנעלה": 400,
-    "פנאי ובילויים": 400,
+    "מזון וקניות": 3000,
+    "מסעדות ובתי קפה": 800,
+    "ביגוד והנעלה": 600,
+    "פנאי ובילויים": 1000,
 }
 
 
