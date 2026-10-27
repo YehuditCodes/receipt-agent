@@ -2,6 +2,8 @@ openai>=3.37,<4
 rich>=15,<16
 python-bidi>=0.6,<0.7
 pillow>=13,<14
+# Tests (pytest) - no API calls
+pytest>=9,<10
 # Browser version (web_app.py) only
 fastapi>=0.162,<1
 uvicorn>=0.54,<1
