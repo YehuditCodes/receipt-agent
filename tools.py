@@ -915,6 +915,9 @@ def skip_document(file: str, reason: str) -> dict:
         return _error(f"הקובץ '{file}' לא נמצא בתיקיית inbox")
     if not isinstance(reason, str) or not reason.strip():
         return _error("חסרה סיבה לדילוג")
+    # A test run recorded 08.jpg, then "skipped" it as a duplicate of a receipt recorded after it
+    if recorded := next((t for t in storage.load_transactions() if t.get("source_file") == file), None):
+        return _error(f"הקובץ '{file}' כבר נרשם ({recorded.get('id')}) – אין לדלג עליו")
     skipped = storage.load_skipped()
     skipped[file] = {"reason": reason.strip(), "skipped_at": datetime.now().isoformat(timespec="seconds")}
     storage.save_skipped(skipped)
