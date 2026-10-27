@@ -770,6 +770,11 @@ def read_document(file: str) -> dict:
     # it is from before the registry check and may itself be a misreading ("שוקי פרר").
     if known and legal_name and _name_letters(legal_name) not in _name_letters(known["business"]):
         known["business"] = reading["business"]
+    # A fuller name that keeps memory's name whole only adds to it: a sideways 08.jpg was remembered as
+    # "מרב - מזון כל בע"מ", then 01.jpg read "אושר עד גבעת שאול (מרב - מזון כל בע"מ)" and lost the brand
+    if known and reading["business"] and _name_letters(known["business"]) != _name_letters(reading["business"]) \
+            and _name_letters(known["business"]) in _name_letters(reading["business"]):
+        known["business"] = reading["business"]
     if known and reading["business"] is None:  # the number identified it although the name was not read
         reading["business"] = known["business"]
         warnings.remove(_MISSING_BUSINESS)
