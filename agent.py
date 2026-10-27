@@ -79,9 +79,10 @@ RULES
   and why recording it may be wrong (e.g. an invoice is a demand for payment - the expense is
   recorded from the receipt when she pays, so recording both counts it twice; mention it if this
   business is already known). Options e.g. "לא לרשום – אעלה את הקבלה כשאשלם" / "לרשום בכל זאת".
-- Something she RECEIVED (a gift voucher, a gift card, a prize, cashback) is income in category
-  "מתנות והטבות" - never an expense: no money left her. Ask whether to record it, options e.g.
-  "לרשום כהכנסה" / "לא לרשום". A purchase later paid with it is a normal expense, so the two cancel out.
+- An "other" document telling her she RECEIVED something (a gift voucher, a gift card, a prize,
+  cashback) is income in category "מתנות והטבות" - no money left her. Ask whether to record it,
+  options e.g. "לרשום כהכנסה" / "לא לרשום". A purchase later paid with it is a normal expense, so
+  the two cancel out. A receipt is never income - even for flowers or a gift she bought.
 - Known business: if read_document returns "known_business", this business was recorded before
   (matched by its business number, or by its name) - record it with that business name and category,
   without asking. Pass the document's tax_id to add_transaction.
@@ -272,6 +273,7 @@ class _RunState:
     evidence_text: dict[str, list[str]] = field(default_factory=dict)
     converted: dict[str, dict] = field(default_factory=dict)  # file -> {"total" in ₪, "original": ...}
     full_names: dict[str, str] = field(default_factory=dict)  # file -> business name with its legal name
+    document_types: dict[str, str] = field(default_factory=dict)  # file -> document_type from read_document
     answers: dict[str, list[str]] = field(default_factory=dict)  # file -> her answers about it
     documents: dict[str, str] = field(default_factory=dict)  # file -> "business · date · amount"
     duplicate_checked: set[tuple] = field(default_factory=set)  # (date, amount) passed to find_duplicate
@@ -353,6 +355,11 @@ def _record_refusal(args: dict, state: _RunState) -> tuple[str, str] | None:
     if not isinstance(file, str):
         return None
     answers = state.answers.get(file, [])
+    # A test run: after the gift-voucher rule was added, a flower-shop receipt was offered as income
+    if args.get("type") == "income" and state.document_types.get(file) in ("receipt", "refund", "bill"):
+        return ("קבלה, זיכוי או חשבון הם תמיד הוצאה (זיכוי – הוצאה בסכום שלילי), גם על מתנה שנקנתה. "
+                "הכנסה היא רק תלוש שכר או הודעה על הטבה שהתקבלה. יש לרשום כהוצאה",
+                "הרישום נעצר: קבלה על קנייה היא הוצאה, לא הכנסה")
     if copy_of := tools.recorded_copy(file):
         return (f"הקובץ '{file}' זהה בדיוק לקובץ של {copy_of} – זה אותו מסמך. יש לדלג עליו "
                 f"(skip_document, סיבה: 'כפילות של {copy_of}') בלי לשאול",
@@ -495,6 +502,7 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
         result["new_count"] = sum(not d["already_recorded"] and "skipped" not in d for d in result["documents"])
     if name == "read_document" and result.get("ok"):
         state.documents[result["file"]] = _describe_document(result)
+        state.document_types[result["file"]] = result.get("document_type")
         if result.get("warnings"):
             state.warned.add(result["file"])
         if result.get("confirm"):
