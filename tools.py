@@ -50,6 +50,8 @@ def _check_date(value) -> str | None:
         return f"התאריך '{value}' לא תקין – נדרש פורמט YYYY-MM-DD"
     if parsed > calendar_date.today():
         return f"התאריך {value} עתידי – כנראה טעות בקריאה"
+    if parsed < calendar_date.fromisoformat(config.OLDEST_DATE):
+        return f"התאריך {value} ישן מדי – כנראה טעות בהקלדה או בקריאה"
     return None
 
 

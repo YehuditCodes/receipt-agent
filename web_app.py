@@ -77,7 +77,9 @@ def dashboard(month: str | None = None) -> dict:
     trend = []
     for m in _months_back(month, TREND_MONTHS):
         s = tools.get_monthly_summary(m)
-        trend.append({"month": m, "income": s["income_total"], "expense": s["expense_total"]})
+        # A month that cannot be summarized (a test recorded the year 1000; six months back is 999)
+        # is shown as empty instead of failing the whole dashboard
+        trend.append({"month": m, "income": s.get("income_total", 0), "expense": s.get("expense_total", 0)})
 
     return {
         "summary": summary,

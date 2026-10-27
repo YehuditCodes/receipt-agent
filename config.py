@@ -48,6 +48,10 @@ READ_TIMEOUT_SECONDS = 90
 # year fall within this many days before today, the agent asks. Other old documents are not
 # questioned - in run 2 all three "old date" questions were about dates that were read correctly.
 YEAR_MISREAD_DAYS = 90
+# The oldest date accepted anywhere (a reading, her answer, a recording, a ✏️ fix). A test run
+# recorded 1000-02-05 from a half-typed year in the date picker, and the dashboard then failed.
+# The oldest real document in the tests is from 2010. Also set in web/app.js (OLDEST_DATE).
+OLDEST_DATE = "2000-01-01"
 # A landscape photo may hold a receipt lying sideways (a real run: no date found, a wrong store name;
 # turned upright, both were read). The model is first asked how far to turn it, on a small copy.
 ROTATION_REASONING_EFFORT = "low"

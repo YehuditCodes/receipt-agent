@@ -25,6 +25,13 @@ def test_date_answer_rejects_nonsense_and_future():
     assert tools.normalize_answer("2099-01-01", "date") is None
 
 
+def test_date_before_2000_is_rejected(add_file):
+    # A half-typed year in the date picker gave 1000-02-05; it was recorded and the dashboard failed
+    assert tools.normalize_answer("1000-02-05", "date") is None
+    assert not record(add_file("a.jpg"), date="1000-02-05")["ok"]
+    assert tools.normalize_answer("2010-03-03", "date") == "2010-03-03"  # the oldest real test receipt
+
+
 def test_amount_answer():
     assert tools.normalize_answer("₪ 1,200.50", "amount") == "1200.5"
     assert tools.normalize_answer("80 ש\"ח", "amount") == "80.0"

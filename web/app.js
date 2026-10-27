@@ -25,6 +25,10 @@ const state = {
   charts: {},
 };
 
+// The oldest date a date field accepts - the same as config.OLDEST_DATE (a half-typed year once gave 1000-02-05)
+const OLDEST_DATE = "2000-01-01";
+const validDate = (value, today) => value !== "" && value >= OLDEST_DATE && value <= today;
+
 const moneyFormat = new Intl.NumberFormat("he-IL", { style: "currency", currency: "ILS", maximumFractionDigits: 2 });
 const money = (n) => moneyFormat.format(n);
 const monthName = (m) => new Intl.DateTimeFormat("he-IL", { month: "long", year: "numeric" })
@@ -262,6 +266,7 @@ function editRow(t, cells) {
   const today = new Date().toLocaleDateString("en-CA");  // YYYY-MM-DD in local time
   const dateInput = el("input", "edit-input");
   dateInput.type = "date";
+  dateInput.min = OLDEST_DATE;
   dateInput.max = today;
   dateInput.value = t.date;
   const amountInput = el("input", "edit-input");
@@ -307,7 +312,7 @@ function editRow(t, cells) {
     }
   });
   // "Save" only while every field is valid (a real past date, an amount above 0, a name)
-  const isValid = () => dateInput.value !== "" && dateInput.value <= today
+  const isValid = () => validDate(dateInput.value, today)
     && Number(amountInput.value) > 0 && amountInput.checkValidity() && input.value.trim() !== "";
   for (const field of [dateInput, amountInput, input]) {
     field.addEventListener("input", () => { save.disabled = !isValid(); });
@@ -566,6 +571,7 @@ function addQuestion(event, socket) {
   const today = new Date().toLocaleDateString("en-CA");  // YYYY-MM-DD in local time
   if (event.answer_type === "date") {
     input.type = "date";
+    input.min = OLDEST_DATE;
     input.max = today;
   } else if (event.answer_type === "amount") {
     input.type = "number";
@@ -576,7 +582,7 @@ function addQuestion(event, socket) {
   }
   const isValid = () => {
     const value = input.value.trim();
-    if (event.answer_type === "date") return value !== "" && value <= today;
+    if (event.answer_type === "date") return validDate(value, today);
     if (event.answer_type === "amount") return Number(value) > 0 && input.checkValidity();
     return value !== "";
   };
