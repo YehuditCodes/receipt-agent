@@ -283,6 +283,7 @@ class _RunState:
     copies: list[str] = field(default_factory=list)  # "file (copy of tNNN)" marked skipped in this run
     confirm: dict[str, list[str]] = field(default_factory=dict)  # file -> values she must confirm ("date", "amount")
     maybe_same: set[str] = field(default_factory=set)  # files that may be another photo of a recorded receipt
+    undated: set[str] = field(default_factory=set)  # files on which no date at all was read
 
 
 # Steps where the model decides something; its sentence before other steps only repeats the step title
@@ -457,6 +458,17 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
             question = f"מסמך: {state.documents[file]}\n\n{question}"
         answer_type = args.get("answer_type") if args.get("answer_type") in ("date", "amount") else "text"
         options = [o for o in (args.get("options") or []) if isinstance(o, str) and o.strip()]
+        # A real run: no date was read on a handwritten receipt, and the model offered today's date (also
+        # in the screenshot's file name) twice, once as "(מומלץ)" - one click would record a wrong date.
+        # With nothing read there is nothing to suggest: only options without digits ("לא לרשום") stay.
+        if answer_type == "date" and file in state.undated:
+            options = [o for o in options if not re.search(r"\d", o)]
+        unique, seen = [], set()  # the same option twice ("X (מומלץ)" and "X") is shown once
+        for option in options:
+            if (key := option.replace("(מומלץ)", "").strip()) not in seen:
+                seen.add(key)
+                unique.append(option)
+        options = unique
         answer = ui.ask(question, options, answer_type)
         # The screen accepts only a valid date / amount; checked here too, for any UI. An option
         # (e.g. "לא לרשום") is taken as is.
@@ -506,6 +518,8 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
     if name == "read_document" and result.get("ok"):
         state.documents[result["file"]] = _describe_document(result)
         state.document_types[result["file"]] = result.get("document_type")
+        if result.get("date_printed") is None:
+            state.undated.add(result["file"])
         if result.get("warnings"):
             state.warned.add(result["file"])
         if result.get("confirm"):

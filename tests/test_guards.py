@@ -96,6 +96,33 @@ def test_invalid_date_answer_is_not_passed_on(add_file):
     assert result["answer"] == ""
 
 
+class OptionsUI(FakeUI):
+    """Keeps the options it was shown."""
+
+    def ask(self, question, options=None, answer_type="text"):
+        self.options = options
+        return ""
+
+
+def test_no_date_suggestions_when_no_date_was_read():
+    # Check 11: today's date was offered as "(מומלץ)" for a receipt with no date read
+    state = agent._RunState()
+    state.undated.add("receipt.png")
+    ui = OptionsUI()
+    run_tool("ask_user", {"question": "מה התאריך?", "file": "receipt.png", "answer_type": "date",
+                          "options": ["2026-10-27 (מומלץ)", "2026-10-27", "לא לרשום"]}, state, ui)
+    assert ui.options == ["לא לרשום"]
+
+
+def test_a_date_suggestion_based_on_the_reading_stays():
+    # A misread year: the likely date comes from what was read, so it is offered (once)
+    state = agent._RunState()
+    ui = OptionsUI()
+    run_tool("ask_user", {"question": "מה התאריך?", "file": "15.jpeg", "answer_type": "date",
+                          "options": ["2026-10-22 (מומלץ)", "2024-10-22", "2026-10-22"]}, state, ui)
+    assert ui.options == ["2026-10-22 (מומלץ)", "2024-10-22"]
+
+
 def test_question_shows_which_document_it_is_about(add_file):
     state = agent._RunState()
     state.documents["01.jpg"] = "אושר עד · 2026-09-09 · 370.60 ₪"
