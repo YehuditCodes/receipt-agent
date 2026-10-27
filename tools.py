@@ -275,24 +275,51 @@ _ROTATION_SCHEMA = {
 }
 
 
-def _text_rotation(image: Image.Image) -> int:
-    """Degrees to turn the image clockwise so its text is upright. Raises on API problems."""
+_UPRIGHT_PROMPT = """Two copies of the same photo, turned differently. In which one does the text read
+normally, the right way up (not upside down)?"""
+_UPRIGHT_SCHEMA = {
+    "type": "object",
+    "properties": {"upright": {"type": "string", "enum": ["A", "B"]}},
+    "required": ["upright"],
+    "additionalProperties": False,
+}
+
+
+def _small_image_part(image: Image.Image) -> dict:
     small = image.convert("RGB")
     small.thumbnail((config.ROTATION_CHECK_PIXELS, config.ROTATION_CHECK_PIXELS))
     buffer = io.BytesIO()
     small.save(buffer, format="JPEG", quality=85)  # without EXIF: the model sees the pixels that are turned
     data_url = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    return {"type": "image_url", "image_url": {"url": data_url, "detail": "low"}}
+
+
+def _ask_small(prompt: str, schema: dict, content: list) -> dict:
     response = _openai_client().chat.completions.create(
         model=config.READ_MODEL,
         reasoning_effort=config.ROTATION_REASONING_EFFORT,
-        response_format={"type": "json_schema",
-                         "json_schema": {"name": "rotation", "schema": _ROTATION_SCHEMA, "strict": True}},
-        messages=[
-            {"role": "system", "content": _ROTATION_PROMPT},
-            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url, "detail": "low"}}]},
-        ],
+        response_format={"type": "json_schema", "json_schema": {"name": "answer", "schema": schema, "strict": True}},
+        messages=[{"role": "system", "content": prompt}, {"role": "user", "content": content}],
     )
-    return json.loads(response.choices[0].message.content)["rotation"]
+    return json.loads(response.choices[0].message.content)
+
+
+def _text_rotation(image: Image.Image) -> int:
+    """Degrees to turn the image clockwise so its text is upright. Raises on API problems.
+
+    Measured (5 tries per image): "already upright" was always right, but about 1 in 10 sideways
+    answers mixed up 90 and 270, and the receipt was read upside down ("פיניש ווש" became
+    "הולנדיה"). Choosing which of two turned copies is upright was right 18 of 18 times - so for
+    a sideways answer, that easier question decides the direction.
+    """
+    rotation = _ask_small(_ROTATION_PROMPT, _ROTATION_SCHEMA, [_small_image_part(image)])["rotation"]
+    if rotation not in (90, 270):
+        return rotation
+    choice = _ask_small(_UPRIGHT_PROMPT, _UPRIGHT_SCHEMA, [
+        {"type": "text", "text": "A:"}, _small_image_part(image.rotate(-90, expand=True)),
+        {"type": "text", "text": "B:"}, _small_image_part(image.rotate(-270, expand=True)),
+    ])["upright"]
+    return 90 if choice == "A" else 270
 
 
 def _upright_content(path) -> bytes:
@@ -312,7 +339,7 @@ def _upright_content(path) -> bytes:
         return content
     if image.width <= image.height:
         return content
-    key = "rotation|" + hashlib.sha256(content).hexdigest() + f"|{config.READ_MODEL}|{_ROTATION_PROMPT}"
+    key = "rotation|" + hashlib.sha256(content).hexdigest() + f"|{config.READ_MODEL}|{_ROTATION_PROMPT}|{_UPRIGHT_PROMPT}"
     cache = storage.load_read_cache() if config.USE_READ_CACHE else {}
     if key not in cache:
         try:
