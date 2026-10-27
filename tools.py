@@ -653,11 +653,16 @@ def _with_familiar_name(printed: str | None, legal: str) -> str:
     """The name to record: "אושר עד (מרב - מזון כל בע"מ)" - the name people know, the legal one beside it.
 
     Her request: the legal name alone was unfamiliar (H&M -> "מאצ' ריטייל"). A printed name close to
-    the legal one is probably a misreading of it ("שוקי פרר" / "שוקי פון בע"מ") - then the legal name alone.
+    the legal one, or to a part of it, is probably a misreading of it ("שוקי פרר" / "שוקי פון בע"מ";
+    a sample: "הפינה" / "הבירה- בי"ס לנהיגה בע"מ") - then the legal name alone.
     """
     printed_letters, legal_letters = _name_letters(printed), _name_letters(legal)
-    if not printed_letters or printed_letters in legal_letters \
-            or difflib.SequenceMatcher(None, printed_letters, legal_letters).ratio() >= 0.5:
+    if not printed_letters:
+        return legal
+    # Every part of the legal name as long as the printed one (the whole name if it is shorter)
+    size = len(printed_letters)
+    parts = [legal_letters[i:i + size] for i in range(max(1, len(legal_letters) - size + 1))]
+    if max(difflib.SequenceMatcher(None, printed_letters, part).ratio() for part in parts) >= 0.5:
         return legal
     return f"{printed} ({legal})"
 
