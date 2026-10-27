@@ -457,7 +457,7 @@ def _parse_printed_date(printed: str | None) -> str | None:
 
 
 # Warnings state facts in her words: what to do about them is in the agent's prompt (and its Python guard)
-_MISSING_BUSINESS = "לא נמצא שם עסק"
+_MISSING_BUSINESS = "לא הצלחתי לזהות שם עסק במסמך"
 
 
 def _likely_misread_year(date: str, printed: str) -> str | None:
@@ -563,7 +563,7 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
                         + ". הוצאה נרשמת לפי הקבלה כשמשלמים – אם נרשום גם את המסמך הזה וגם את הקבלה, "
                         "הסכום ייספר פעמיים")
     if reading["total"] is None:
-        warnings.append("לא נמצא סכום כולל")
+        warnings.append("לא הצלחתי לזהות סכום כולל במסמך")
     elif reading.get("total_handwritten"):
         # A test run: a handwritten 320 was read as 300 - Python cannot check handwritten digits
         warnings.append(f"הסכום כתוב ביד ונקרא {reading['total']} ₪ – ספרות בכתב יד עלולות להיקרא לא נכון")
@@ -575,7 +575,7 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
     # No usable date: it must come from her. A real run: a gift-voucher email with no date was
     # recorded with today's date after she said "record anyway" - the prompt alone did not stop it.
     if reading["date_printed"] is None:
-        warnings.append("לא נמצא תאריך על המסמך")
+        warnings.append("לא הצלחתי לזהות תאריך במסמך")
         reading["confirm"].append("date")
     elif reading["date"] is None:
         warnings.append(f"לא הצלחתי להבין את התאריך '{reading['date_printed']}'")
