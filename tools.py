@@ -545,12 +545,17 @@ def _check_reading(reading: dict) -> tuple[list[str], list[str]]:
         warnings.append(_MISSING_BUSINESS)
 
     reading["date"] = _parse_printed_date(reading["date_printed"])
+    # No usable date: it must come from her. A real run: a gift-voucher email with no date was
+    # recorded with today's date after she said "record anyway" - the prompt alone did not stop it.
     if reading["date_printed"] is None:
         warnings.append("לא נמצא תאריך על המסמך")
+        reading["confirm"].append("date")
     elif reading["date"] is None:
         warnings.append(f"לא הצלחתי להבין את התאריך '{reading['date_printed']}'")
+        reading["confirm"].append("date")
     elif problem := _check_date(reading["date"]):
         warnings.append(f"{problem} (מודפס: {reading['date_printed']})")
+        reading["confirm"].append("date")
     elif likely := _likely_misread_year(reading["date"], reading["date_printed"]):
         warnings.append(
             f"ייתכן שהשנה נקראה לא נכון – התאריך הסביר: {likely} (נקרא {reading['date']}, מודפס: {reading['date_printed']})"

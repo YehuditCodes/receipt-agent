@@ -362,9 +362,15 @@ def _record_refusal(args: dict, state: _RunState) -> tuple[str, str] | None:
     # model chose the date itself - each value she must confirm has to come from her answers
     needed = state.confirm.get(file, [])
     if "date" in needed and not _date_answered(args.get("date"), answers):
-        return ("השנה בתאריך לא ודאית – יש לשאול את המשתמשת על התאריך (ask_user עם file, answer_type 'date', "
-                "התאריך הסביר ראשון עם ' (מומלץ)') ולרשום את התאריך שבחרה",
+        return ("התאריך חסר או לא ודאי – יש לשאול את המשתמשת על התאריך (ask_user עם file, answer_type 'date', "
+                "התאריך הסביר ראשון עם ' (מומלץ)' אם יש כזה) ולרשום את התאריך שבחרה. אין להשתמש בתאריך של היום",
                 "הרישום נעצר: קודם שאלה על התאריך")
+    business = args.get("business")
+    if "business" in needed and not (isinstance(business, str) and business.strip()
+                                     and any(business.strip() in a or a.strip() in business for a in answers if a.strip())):
+        return ("שם העסק לא נמצא במסמך – יש לשאול את המשתמשת מה שם העסק (ask_user עם file) ולרשום את השם "
+                "שכתבה. אין להמציא שם",
+                "הרישום נעצר: קודם שאלה על שם העסק")
     if "amount" in needed and not _amount_answered(args.get("amount"), answers):
         return ("הסכום כתוב ביד – יש לשאול את המשתמשת על הסכום (ask_user עם file, answer_type 'amount', "
                 "האפשרות '<סכום> ₪ – נכון') ולרשום את הסכום שאישרה",
@@ -490,6 +496,9 @@ def _run_tool(name: str, raw_args: str, ui: AgentUI, state: _RunState) -> dict:
             state.warned.add(result["file"])
         if result.get("confirm"):
             state.confirm[result["file"]] = result["confirm"]
+        if not result.get("business"):  # after the registry and memory had their chance
+            # A test run: no name was read, she answered "לרשום בכל זאת", and "שובר מתנה" was recorded as the business
+            state.confirm.setdefault(result["file"], []).append("business")
         if result.get("document_type") in ("receipt", "refund") and not result.get("known_business"):
             names = [result.get("business"), result.get("business_printed")] + [i["name"] for i in result.get("items", [])]
             state.evidence_text[result["file"]] = [n for n in names if n]
